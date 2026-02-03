@@ -77,10 +77,10 @@ def track_weekly(csv_path: str, spreadsheet_id: str, credentials_path: str = "go
         print(f"Week {week_label} already tracked. Skipping.")
         return
 
-    # Find the Status column index (last column before we add new ones)
+    # Find the Alert column index (last column before we add new ones)
     status_col = len(headers) - 1
 
-    # Add new week columns before Status
+    # Add new week columns before Alert
     new_headers = headers[:status_col] + [
         f"Score\n{week_label}",
         f"Vol\n{week_label}",
@@ -135,7 +135,7 @@ def track_weekly(csv_path: str, spreadsheet_id: str, credentials_path: str = "go
                     alerts_for_keyword.append(f"📉 Purch -{abs(purchase_change):.0f}%")
                     alerts.append(f"{keyword}: Purchase share dropped {abs(purchase_change):.0f}% (losing to competitors)")
 
-            status = " | ".join(alerts_for_keyword) if alerts_for_keyword else "✓"
+            status = " | ".join(alerts_for_keyword) if alerts_for_keyword else ""
         else:
             # Keyword not found in new data
             curr_score = "-"
@@ -151,6 +151,34 @@ def track_weekly(csv_path: str, spreadsheet_id: str, credentials_path: str = "go
     # Write updated data
     ws.clear()
     ws.update(values=new_rows, range_name="A1")
+
+    # Re-apply checkbox validation to "In Title" column if it exists
+    if "In Title" in new_headers:
+        in_title_col = new_headers.index("In Title")
+        num_rows = len(new_rows)
+        sheet_id = ws.id
+        checkbox_request = {
+            "requests": [{
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 1,
+                        "endRowIndex": num_rows,
+                        "startColumnIndex": in_title_col,
+                        "endColumnIndex": in_title_col + 1
+                    },
+                    "cell": {
+                        "dataValidation": {
+                            "condition": {"type": "BOOLEAN"},
+                            "strict": True,
+                            "showCustomUi": True
+                        }
+                    },
+                    "fields": "dataValidation"
+                }
+            }]
+        }
+        sheet.batch_update(checkbox_request)
 
     print(f"Updated watchlist with {week_label} data")
 
@@ -229,20 +257,45 @@ def reset_watchlist(csv_path: str, spreadsheet_id: str, credentials_path: str = 
     week_label = _extract_week_label(first_line, csv_path.name)
 
     # Build headers and rows
-    headers = ["Rank", "Keyword", f"Score\n{week_label}", f"Vol\n{week_label}", f"Purch%\n{week_label}", "Status"]
+    headers = ["Rank", "Keyword", "In Title", f"Score\n{week_label}", f"Vol\n{week_label}", f"Purch%\n{week_label}", "Alert"]
     rows = [headers]
 
     for i, kw in enumerate(top_10, 1):
         rows.append([
             i,
             kw["keyword"],
+            "",  # Checkbox - user marks if keyword is in listing title
             kw["score"],
             kw["volume"],
             round(kw["purchase_share"], 1),
-            "✓ Tracking"
+            ""
         ])
 
     ws.update(values=rows, range_name="A1")
+
+    # Add checkbox data validation to "In Title" column (C2:C11)
+    sheet_id = ws.id
+    checkbox_request = {
+        "requests": [{
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 1,
+                    "endRowIndex": 11,
+                    "startColumnIndex": 2,
+                    "endColumnIndex": 3
+                },
+                "cell": {
+                    "dataValidation": {
+                        "condition": {"type": "BOOLEAN"},
+                        "showCustomUi": True
+                    }
+                },
+                "fields": "dataValidation"
+            }
+        }]
+    }
+    sheet.batch_update(checkbox_request)
 
     print(f"\nCreated new watchlist with top 10 keywords:")
     print(f"{'#':<3} {'Keyword':<45} {'Score':>6} {'Vol':>5}")
