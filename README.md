@@ -201,6 +201,31 @@ This will:
 | **ASINs** | Your products to track |
 | **Keyword Watchlist** | Top 10 keywords with weekly trend data |
 
+### Keyword Watchlist Columns
+
+| Column | Purpose |
+|--------|---------|
+| **Rank** | Amazon's Search Query Score (1 = most important) |
+| **Keyword** | The search term |
+| **In Title** | ☑ Checkbox - mark if you're using this keyword in your listing title |
+| **Score/Vol/Purch%** | Weekly metrics (new columns added each week) |
+| **Alert** | Empty if stable, shows warning when metrics drop |
+
+Use the **In Title** checkbox to track which of your top keywords you've actually included in your listing title. This helps you see if you're missing any important keywords.
+
+### Example Alert View
+
+```
+Keyword                        W05 Vol  W06 Vol  Purch%   Alert
+----------------------------------------------------------------
+10mg scoop                          57       28   37.5%   📉 Vol -51%
+milligram measuring spoons          88       88   37.5%
+mg scoop                            52       52   33.3%   📉 Purch -50%
+```
+
+- `📉 Vol -XX%` → Keyword losing popularity (find replacement)
+- `📉 Purch -XX%` → Losing to competitors (investigate price/reviews)
+
 ## Keyword Categories (Full Analysis)
 
 When running full analysis (`--import-csv` without tracker), keywords are categorized:
