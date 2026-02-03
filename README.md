@@ -52,6 +52,74 @@ When purchase share drops, check these to find the root cause:
 | Click Share | Appeal | Better main image, title, or lower price |
 | Purchase Share only | Conversion | Reviews, A+ content, price competitiveness |
 
+---
+
+## Deep Dive: How To Read The Numbers
+
+### Search Volume Explained
+
+**What it is:** How many people searched that exact term on Amazon this week.
+
+**Example fluctuations:**
+```
+Week 1: "mg scoop" → 500 searches
+Week 2: "mg scoop" → 480 searches  ← Normal fluctuation (ignore)
+Week 3: "mg scoop" → 250 searches  ← 📉 50% drop (ALERT!)
+```
+
+**Why volume drops:**
+- **Seasonal** - Summer vs winter products
+- **Trend died** - Think fidget spinners in 2018
+- **Language shift** - People started using different words
+
+**What to do:** If volume dies, find what NEW keyword people are using instead. Check Amazon's search suggestions or your SQP report for rising terms.
+
+### Purchase Share % Explained
+
+**What it is:** Of everyone who BOUGHT something after searching this keyword, what percentage bought YOUR product.
+
+**Example:**
+```
+100 people search "mg scoop"
+ └─→ 40 people buy something (60 left without buying)
+      └─→ 16 buy YOUR product
+      └─→ 24 buy COMPETITOR products
+
+Your Purchase Share = 16 ÷ 40 = 40%
+```
+
+**Why purchase share drops:**
+- Competitor **lowered their price**
+- Competitor **got more/better reviews**
+- Your listing got worse (bad image, out of stock, lost Buy Box)
+- **New competitor** entered the market
+
+**What to do:** Investigate who's stealing your sales. Check the top 3 competitors for that keyword - compare their price, reviews, and main image to yours.
+
+### Real Example
+
+If your report shows:
+
+| Keyword | Score | Volume | Purchase % |
+|---------|-------|--------|------------|
+| mg scoop | 3 | 52 | 66.7% |
+
+This means:
+- Amazon ranks it your **#3 most important keyword**
+- **52 people** searched it this week
+- Of everyone who bought after searching this, **66.7% bought from YOU**
+
+**That's strong!** If next week it drops to 33%, someone is stealing half your sales on this keyword. Time to investigate.
+
+### The Two Alerts Summarized
+
+| Alert | What Happened | What To Do |
+|-------|---------------|------------|
+| 📉 Vol -30% | Fewer people searching this term | Find what keywords they're using NOW |
+| 📉 Purch -20% | Same searches, but competitors winning more | Check competitor price/reviews/listing |
+
+---
+
 ## Setup
 
 ### 1. Google Sheets
