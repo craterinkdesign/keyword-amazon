@@ -36,6 +36,25 @@ class Thresholds:
     price_warning_threshold: float
     price_critical_threshold: float
 
+    # Rank Status thresholds (impression share %)
+    rank_top_3_threshold: float = 20.0
+    rank_page_1_high_threshold: float = 10.0
+    rank_page_1_low_threshold: float = 1.0
+
+    # Diagnostic thresholds
+    ghost_min_volume: int = 500
+    ghost_max_imp_share: float = 1.0
+    window_shopper_min_imp_share: float = 10.0
+    window_shopper_max_click_share: float = 1.0
+    price_problem_min_imp_share: float = 5.0
+
+    # Placement thresholds (volume percentile)
+    title_min_volume_percentile: float = 80.0
+    title_min_click_share: float = 5.0
+    title_top_volume_percentile: float = 95.0
+    bullets_min_volume_percentile: float = 50.0
+    backend_min_volume_percentile: float = 20.0
+
 
 @dataclass
 class AppConfig:
@@ -89,6 +108,48 @@ def load_config() -> AppConfig:
             ),
             price_critical_threshold=config(
                 "PRICE_CRITICAL_THRESHOLD", default=20.0, cast=float
+            ),
+            # Rank Status thresholds
+            rank_top_3_threshold=config(
+                "RANK_TOP_3_THRESHOLD", default=20.0, cast=float
+            ),
+            rank_page_1_high_threshold=config(
+                "RANK_PAGE_1_HIGH_THRESHOLD", default=10.0, cast=float
+            ),
+            rank_page_1_low_threshold=config(
+                "RANK_PAGE_1_LOW_THRESHOLD", default=1.0, cast=float
+            ),
+            # Diagnostic thresholds
+            ghost_min_volume=config(
+                "GHOST_MIN_VOLUME", default=500, cast=int
+            ),
+            ghost_max_imp_share=config(
+                "GHOST_MAX_IMP_SHARE", default=1.0, cast=float
+            ),
+            window_shopper_min_imp_share=config(
+                "WINDOW_SHOPPER_MIN_IMP_SHARE", default=10.0, cast=float
+            ),
+            window_shopper_max_click_share=config(
+                "WINDOW_SHOPPER_MAX_CLICK_SHARE", default=1.0, cast=float
+            ),
+            price_problem_min_imp_share=config(
+                "PRICE_PROBLEM_MIN_IMP_SHARE", default=5.0, cast=float
+            ),
+            # Placement thresholds
+            title_min_volume_percentile=config(
+                "TITLE_MIN_VOLUME_PERCENTILE", default=80.0, cast=float
+            ),
+            title_min_click_share=config(
+                "TITLE_MIN_CLICK_SHARE", default=5.0, cast=float
+            ),
+            title_top_volume_percentile=config(
+                "TITLE_TOP_VOLUME_PERCENTILE", default=95.0, cast=float
+            ),
+            bullets_min_volume_percentile=config(
+                "BULLETS_MIN_VOLUME_PERCENTILE", default=50.0, cast=float
+            ),
+            backend_min_volume_percentile=config(
+                "BACKEND_MIN_VOLUME_PERCENTILE", default=20.0, cast=float
             ),
         ),
     )

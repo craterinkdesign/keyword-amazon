@@ -240,6 +240,89 @@ class SheetsClient:
 
         worksheet.update("A1", rows)
 
+    def write_diagnostics(self, diagnostics: list[dict[str, Any]]) -> None:
+        """Write keyword diagnostics to SQP-Diagnostics tab."""
+        headers = [
+            "Search Query",
+            "ASIN",
+            "Diagnostic",
+            "Rank Status",
+            "Opportunity Score",
+            "Volume",
+            "Imp Share",
+            "Click Share",
+            "Purchase Share",
+            "Recommended Fix",
+        ]
+
+        worksheet = self._get_or_create_worksheet(
+            "SQP-Diagnostics", rows=len(diagnostics) + 100
+        )
+        worksheet.clear()
+
+        rows = [headers]
+        for record in diagnostics:
+            rows.append([record.get(h, "") for h in headers])
+
+        worksheet.update("A1", rows)
+
+    def write_placements(self, placements: list[dict[str, Any]]) -> None:
+        """Write keyword placement recommendations to SQP-Placements tab."""
+        headers = [
+            "Search Query",
+            "ASIN",
+            "Placement",
+            "Priority",
+            "Volume",
+            "Click Share",
+            "Reasoning",
+        ]
+
+        worksheet = self._get_or_create_worksheet(
+            "SQP-Placements", rows=len(placements) + 100
+        )
+        worksheet.clear()
+
+        rows = [headers]
+        for record in placements:
+            rows.append([record.get(h, "") for h in headers])
+
+        worksheet.update("A1", rows)
+
+    def write_opportunity_ranking(self, opportunities: list[dict[str, Any]]) -> None:
+        """Write top opportunities to SQP-TopOpportunities tab."""
+        headers = [
+            "Rank",
+            "Search Query",
+            "ASIN",
+            "Opportunity Score",
+            "Volume",
+            "Imp Share",
+            "Diagnostic",
+            "Recommended Fix",
+        ]
+
+        worksheet = self._get_or_create_worksheet(
+            "SQP-TopOpportunities", rows=len(opportunities) + 100
+        )
+        worksheet.clear()
+
+        rows = [headers]
+        for i, record in enumerate(opportunities, 1):
+            row = [
+                i,  # Rank
+                record.get("Search Query", ""),
+                record.get("ASIN", ""),
+                record.get("Opportunity Score", ""),
+                record.get("Volume", ""),
+                record.get("Imp Share", ""),
+                record.get("Diagnostic", ""),
+                record.get("Recommended Fix", ""),
+            ]
+            rows.append(row)
+
+        worksheet.update("A1", rows)
+
     def test_connection(self) -> bool:
         """Test connection to Google Sheets."""
         try:

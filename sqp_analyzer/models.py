@@ -28,6 +28,30 @@ class PriceSeverity(Enum):
     CRITICAL = "critical"
 
 
+class RankStatus(Enum):
+    """Estimated page position based on impression share."""
+    TOP_3 = "top_3"           # >20% imp share
+    PAGE_1_HIGH = "page_1_high"  # 10-20%
+    PAGE_1_LOW = "page_1_low"    # 1-10%
+    INVISIBLE = "invisible"       # <1%
+
+
+class DiagnosticType(Enum):
+    """Keyword diagnostic types for root cause analysis."""
+    GHOST = "ghost"              # High volume, no impressions
+    WINDOW_SHOPPER = "window_shopper"  # Seen but not clicked
+    PRICE_PROBLEM = "price_problem"    # Clicked but not bought
+    HEALTHY = "healthy"
+
+
+class PlacementTarget(Enum):
+    """Recommended keyword placement location."""
+    TITLE = "title"
+    BULLETS = "bullets"
+    BACKEND = "backend"
+    DESCRIPTION = "description"
+
+
 @dataclass
 class SQPRecord:
     """Single SQP data record for a search query."""
@@ -198,4 +222,58 @@ class ASINSummary:
             "Price Flagged": self.price_flagged_count,
             "Health Score": self.health_score,
             "Last Updated": self.last_updated.isoformat() if self.last_updated else "",
+        }
+
+
+@dataclass
+class KeywordDiagnostic:
+    """Diagnostic analysis for a keyword."""
+    search_query: str
+    asin: str
+    diagnostic_type: DiagnosticType
+    rank_status: RankStatus
+    opportunity_score: float
+    search_volume: int = 0
+    impressions_share: float = 0.0
+    clicks_share: float = 0.0
+    purchases_share: float = 0.0
+    recommended_fix: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for sheet output."""
+        return {
+            "Search Query": self.search_query,
+            "ASIN": self.asin,
+            "Diagnostic": self.diagnostic_type.value,
+            "Rank Status": self.rank_status.value,
+            "Opportunity Score": self.opportunity_score,
+            "Volume": self.search_volume,
+            "Imp Share": self.impressions_share,
+            "Click Share": self.clicks_share,
+            "Purchase Share": self.purchases_share,
+            "Recommended Fix": self.recommended_fix,
+        }
+
+
+@dataclass
+class KeywordPlacement:
+    """Keyword placement recommendation."""
+    search_query: str
+    asin: str
+    placement: PlacementTarget
+    priority: int
+    search_volume: int = 0
+    clicks_share: float = 0.0
+    reasoning: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for sheet output."""
+        return {
+            "Search Query": self.search_query,
+            "ASIN": self.asin,
+            "Placement": self.placement.value,
+            "Priority": self.priority,
+            "Volume": self.search_volume,
+            "Click Share": self.clicks_share,
+            "Reasoning": self.reasoning,
         }

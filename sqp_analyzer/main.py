@@ -10,7 +10,13 @@ from .amazon import BrandAnalyticsClient
 from .sheets import SheetsClient
 from .parsers import parse_api_report
 from .models import ASINSummary, WeeklySnapshot
-from .analyzers import KeywordCategorizer, TrendTracker, PriceBenchmark
+from .analyzers import (
+    DiagnosticAnalyzer,
+    KeywordCategorizer,
+    PlacementRecommender,
+    PriceBenchmark,
+    TrendTracker,
+)
 from .importers import import_csv, import_excel, import_folder
 
 
@@ -113,11 +119,17 @@ def analyze_snapshots(
     categorizer = KeywordCategorizer(config.thresholds)
     trend_tracker = TrendTracker()
     price_benchmark = PriceBenchmark(config.thresholds)
+    diagnostic_analyzer = DiagnosticAnalyzer(config.thresholds)
+    placement_recommender = PlacementRecommender(config.thresholds)
 
     # Run analysis
     categorized = categorizer.categorize(latest)
     trends = trend_tracker.analyze_trends(snapshots)
     price_flags = price_benchmark.analyze(latest)
+
+    # Run new diagnostic and placement analysis
+    diagnostics = diagnostic_analyzer.analyze(latest, price_flags)
+    placements = placement_recommender.analyze(latest)
 
     return {
         "latest_snapshot": latest,
@@ -127,9 +139,13 @@ def analyze_snapshots(
         "leaks": categorizer.get_leaks(categorized),
         "trends": trends,
         "price_flags": price_flags,
+        "diagnostics": diagnostics,
+        "placements": placements,
         "summary": {
             "categories": categorizer.summarize(categorized),
             "prices": price_benchmark.summarize(price_flags),
+            "diagnostics": diagnostic_analyzer.summarize(diagnostics),
+            "placements": placement_recommender.summarize(placements),
         },
     }
 
@@ -200,6 +216,26 @@ def write_results_to_sheets(
     if analysis.get("price_flags"):
         print(f"  Writing {len(analysis['price_flags'])} price flags...")
         client.write_price_flags([f.to_dict() for f in analysis["price_flags"]])
+
+    # Write diagnostics
+    if analysis.get("diagnostics"):
+        print(f"  Writing {len(analysis['diagnostics'])} diagnostics...")
+        client.write_diagnostics([d.to_dict() for d in analysis["diagnostics"]])
+
+        # Write top 50 opportunities
+        sorted_diagnostics = sorted(
+            analysis["diagnostics"],
+            key=lambda d: d.opportunity_score,
+            reverse=True,
+        )
+        top_opportunities = sorted_diagnostics[:50]
+        print(f"  Writing top {len(top_opportunities)} opportunities...")
+        client.write_opportunity_ranking([d.to_dict() for d in top_opportunities])
+
+    # Write placements
+    if analysis.get("placements"):
+        print(f"  Writing {len(analysis['placements'])} placements...")
+        client.write_placements([p.to_dict() for p in analysis["placements"]])
 
     # Build and write summary
     summary = analysis.get("summary", {})
@@ -275,12 +311,24 @@ def process_asin(
     # Print summary
     summary = analysis.get("summary", {})
     categories = summary.get("categories", {})
+    diagnostics_summary = summary.get("diagnostics", {})
+    placements_summary = summary.get("placements", {})
     print(f"\nAnalysis Summary:")
     print(f"  Total keywords: {categories.get('total', 0)}")
     print(f"  Bread & Butter: {categories.get('bread_butter', 0)}")
     print(f"  Opportunities: {categories.get('opportunities', 0)}")
     print(f"  Leaks: {categories.get('leaks', 0)}")
     print(f"  Price flagged: {summary.get('prices', {}).get('total_flagged', 0)}")
+    print(f"\nDiagnostics:")
+    print(f"  Ghost (not ranking): {diagnostics_summary.get('ghost', 0)}")
+    print(f"  Window Shopper (low CTR): {diagnostics_summary.get('window_shopper', 0)}")
+    print(f"  Price Problem: {diagnostics_summary.get('price_problem', 0)}")
+    print(f"  Healthy: {diagnostics_summary.get('healthy', 0)}")
+    print(f"\nPlacements:")
+    print(f"  Title: {placements_summary.get('title', 0)}")
+    print(f"  Bullets: {placements_summary.get('bullets', 0)}")
+    print(f"  Backend: {placements_summary.get('backend', 0)}")
+    print(f"  Description: {placements_summary.get('description', 0)}")
 
     # Write to sheets
     write_results_to_sheets(config, asin, analysis, snapshots)
@@ -402,12 +450,24 @@ def main():
         # Print summary
         summary = analysis.get("summary", {})
         categories = summary.get("categories", {})
+        diagnostics_summary = summary.get("diagnostics", {})
+        placements_summary = summary.get("placements", {})
         print(f"\nAnalysis Summary:")
         print(f"  Total keywords: {categories.get('total', 0)}")
         print(f"  Bread & Butter: {categories.get('bread_butter', 0)}")
         print(f"  Opportunities: {categories.get('opportunities', 0)}")
         print(f"  Leaks: {categories.get('leaks', 0)}")
         print(f"  Price flagged: {summary.get('prices', {}).get('total_flagged', 0)}")
+        print(f"\nDiagnostics:")
+        print(f"  Ghost (not ranking): {diagnostics_summary.get('ghost', 0)}")
+        print(f"  Window Shopper (low CTR): {diagnostics_summary.get('window_shopper', 0)}")
+        print(f"  Price Problem: {diagnostics_summary.get('price_problem', 0)}")
+        print(f"  Healthy: {diagnostics_summary.get('healthy', 0)}")
+        print(f"\nPlacements:")
+        print(f"  Title: {placements_summary.get('title', 0)}")
+        print(f"  Bullets: {placements_summary.get('bullets', 0)}")
+        print(f"  Backend: {placements_summary.get('backend', 0)}")
+        print(f"  Description: {placements_summary.get('description', 0)}")
 
         if not args.dry_run:
             write_results_to_sheets(config, asin, analysis, snapshots)
