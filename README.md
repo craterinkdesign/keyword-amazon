@@ -274,7 +274,10 @@ When running full analysis (`--import-csv` without tracker), keywords are catego
     ├── parsers.py            # Data parsing
     ├── analyzers/            # Analysis algorithms
     └── commands/
-        └── fetch_sqp_data.py # Fetch SQP data via SP-API
+        ├── fetch_sqp_data.py         # Fetch SQP data via SP-API
+        ├── fetch_traffic_sales.py    # Fetch traffic & sales by ASIN
+        ├── analyze_sqp.py            # Analyze SQP data and write to Sheets
+        └── analyze_traffic_sales.py  # Write traffic/sales to Sheets
 ```
 
 ## SP-API SQP Fetching
@@ -314,3 +317,129 @@ python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX --wait
 - Brand Analytics reports take **30-60 minutes** to process
 - Weekly reports must start on a **Sunday**
 - Reports show search queries, impressions, clicks, and purchase data for your ASIN
+
+## SQP Analysis Command
+
+The `analyze_sqp` command fetches a completed SQP report, runs diagnostic and placement analysis, and writes results to Google Sheets.
+
+### Usage
+
+```bash
+# Analyze a completed report and write to Google Sheets
+python -m sqp_analyzer.commands.analyze_sqp --report-id REPORT_ID
+
+# Test Google Sheets connection
+python -m sqp_analyzer.commands.analyze_sqp --test-sheets
+```
+
+### Workflow
+
+1. Request a report: `python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX`
+2. Wait 30-60 minutes for processing
+3. Check status: `python -m sqp_analyzer.commands.fetch_sqp_data --check REPORT_ID`
+4. Once DONE, analyze: `python -m sqp_analyzer.commands.analyze_sqp --report-id REPORT_ID`
+
+### Output Tabs
+
+The command creates/updates these Google Sheets tabs:
+
+| Tab | Description |
+|-----|-------------|
+| **SQP-Diagnostics** | All keywords with diagnostic type, rank status, opportunity score |
+| **SQP-Placements** | Keyword placement recommendations (Title/Bullets/Backend/Description) |
+| **SQP-TopOpportunities** | Top 20 keywords ranked by opportunity score |
+
+### Diagnostic Types
+
+| Type | Meaning | Fix |
+|------|---------|-----|
+| **Ghost** | High volume but invisible (not ranking) | Add to listing or run PPC |
+| **Window Shopper** | Seen but not clicked | Improve main image/title |
+| **Price Problem** | Clicked but not bought | Check pricing vs competitors |
+| **Healthy** | No issues detected | Maintain strategy |
+
+### Placement Recommendations
+
+| Placement | Criteria | Priority |
+|-----------|----------|----------|
+| **Title** | Top 5% volume OR (top 20% + good click share) | Highest |
+| **Bullets** | 50-80% volume percentile | High |
+| **Backend** | 20-50% volume percentile | Medium |
+| **Description** | Bottom 20% volume | Lower |
+
+## Traffic and Sales Report
+
+The `fetch_traffic_sales` command fetches Business Report data (traffic and sales) by child ASIN.
+
+### Usage
+
+```bash
+# Request report for last 7 days (daily by child ASIN)
+python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0CSH12L5P
+
+# Request and wait for completion
+python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0CSH12L5P --wait
+
+# Weekly granularity instead of daily
+python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0CSH12L5P --date-granularity WEEK
+
+# Custom date range
+python -m sqp_analyzer.commands.fetch_traffic_sales --start-date 2026-01-01 --end-date 2026-01-31
+
+# Check status of pending report
+python -m sqp_analyzer.commands.fetch_traffic_sales --check REPORT_ID
+
+# List recent reports
+python -m sqp_analyzer.commands.fetch_traffic_sales --list
+```
+
+### Report Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--date-granularity` | DAY, WEEK, MONTH | DAY | Time period aggregation |
+| `--asin-granularity` | PARENT, CHILD, SKU | CHILD | Product aggregation level |
+
+### Metrics Returned
+
+**Sales Metrics:**
+- Units Ordered
+- Ordered Product Sales ($)
+- Units Shipped
+- Orders Shipped
+- Refund Rate
+
+**Traffic Metrics:**
+- Page Views (browser + mobile)
+- Sessions
+- Buy Box Percentage
+- Unit Session Percentage
+
+### Notes
+
+- Reports typically take **5-15 minutes** to process
+- Data is available 72 hours after the period closes
+- Use `CHILD` granularity to see individual variation performance
+
+### Write to Google Sheets
+
+Use `analyze_traffic_sales` to write report data to Google Sheets:
+
+```bash
+# Write completed report to Google Sheets
+python -m sqp_analyzer.commands.analyze_traffic_sales --report-id REPORT_ID
+```
+
+### Workflow
+
+1. Request report: `python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0XXXXXXXX`
+2. Wait 5-15 minutes for processing
+3. Check status: `python -m sqp_analyzer.commands.fetch_traffic_sales --check REPORT_ID`
+4. Once DONE, write to Sheets: `python -m sqp_analyzer.commands.analyze_traffic_sales --report-id REPORT_ID`
+
+### Output Tabs
+
+| Tab | Description |
+|-----|-------------|
+| **Traffic-ByDate** | Daily metrics: units, sales, sessions, page views, buy box % |
+| **Traffic-ByASIN** | Per-ASIN metrics: units, sales, sessions, buy box % |

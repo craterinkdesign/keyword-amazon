@@ -1,31 +1,9 @@
-"""Core data models for SQP Analyzer."""
+"""Core data models for SQP Analyzer - Quarterly Tracker."""
 
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
 from typing import Any
-
-
-class KeywordCategory(Enum):
-    """Keyword categorization."""
-    BREAD_BUTTER = "bread_butter"
-    OPPORTUNITY = "opportunity"
-    LEAK = "leak"
-    UNCATEGORIZED = "uncategorized"
-
-
-class TrendDirection(Enum):
-    """Trend direction indicator."""
-    GROWING = "growing"
-    STABLE = "stable"
-    DECLINING = "declining"
-
-
-class PriceSeverity(Enum):
-    """Price competitiveness severity levels."""
-    OK = "ok"
-    WARNING = "warning"
-    CRITICAL = "critical"
 
 
 class RankStatus(Enum):
@@ -37,19 +15,11 @@ class RankStatus(Enum):
 
 
 class DiagnosticType(Enum):
-    """Keyword diagnostic types for root cause analysis."""
+    """Keyword diagnostic types for opportunity score calculation."""
     GHOST = "ghost"              # High volume, no impressions
     WINDOW_SHOPPER = "window_shopper"  # Seen but not clicked
     PRICE_PROBLEM = "price_problem"    # Clicked but not bought
     HEALTHY = "healthy"
-
-
-class PlacementTarget(Enum):
-    """Recommended keyword placement location."""
-    TITLE = "title"
-    BULLETS = "bullets"
-    BACKEND = "backend"
-    DESCRIPTION = "description"
 
 
 @dataclass
@@ -117,163 +87,69 @@ class WeeklySnapshot:
 
 
 @dataclass
-class CategorizedKeyword:
-    """A keyword with its category and metrics."""
-    search_query: str
+class ListingContent:
+    """Listing content for keyword placement detection."""
     asin: str
-    category: KeywordCategory
-    action: str = ""
+    sku: str
+    title: str = ""
+    bullets: list[str] = field(default_factory=list)
+    backend_keywords: list[str] = field(default_factory=list)
 
-    # Latest metrics
-    impressions_share: float = 0.0
-    clicks_share: float = 0.0
-    purchases_share: float = 0.0
-    search_volume: int = 0
+    def contains_keyword(self, keyword: str) -> tuple[bool, bool]:
+        """Check if keyword is in title and/or backend.
 
-    # Pricing
-    asin_price: float | None = None
-    market_price: float | None = None
+        Returns:
+            Tuple of (in_title, in_backend)
+        """
+        keyword_lower = keyword.lower()
+        in_title = keyword_lower in self.title.lower()
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for sheet output."""
-        return {
-            "Search Query": self.search_query,
-            "ASIN": self.asin,
-            "Category": self.category.value,
-            "Imp Share": self.impressions_share,
-            "Click Share": self.clicks_share,
-            "Purchase Share": self.purchases_share,
-            "Volume": self.search_volume,
-            "Recommended Action": self.action,
-        }
+        # Check backend keywords
+        backend_text = " ".join(self.backend_keywords).lower()
+        in_backend = keyword_lower in backend_text
+
+        return in_title, in_backend
 
 
 @dataclass
-class TrendRecord:
-    """12-week trend data for a keyword."""
-    search_query: str
-    asin: str
-    weekly_purchase_shares: dict[str, float] = field(default_factory=dict)
-    trend_direction: TrendDirection = TrendDirection.STABLE
-    growth_percent: float = 0.0
+class QuarterlyKeyword:
+    """A keyword tracked for the quarter with weekly metrics."""
+    rank: int
+    keyword: str
+    in_title: bool = False
+    in_backend: bool = False
+    weekly_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
+    alerts: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for sheet output."""
-        result = {
-            "Search Query": self.search_query,
-            "ASIN": self.asin,
-            "Trend Direction": self.trend_direction.value,
-            "Growth %": self.growth_percent,
-        }
-        # Add weekly shares
-        for week, share in self.weekly_purchase_shares.items():
-            result[week] = share
-        return result
+    def to_row(self, weeks_to_include: list[str]) -> list[Any]:
+        """Convert to a row for Google Sheets.
 
+        Args:
+            weeks_to_include: List of week labels to include (e.g., ['W01', 'W02'])
 
-@dataclass
-class PriceFlag:
-    """Price competitiveness flag for a keyword."""
-    search_query: str
-    asin: str
-    asin_price: float
-    market_price: float
-    price_diff_percent: float
-    severity: PriceSeverity
-    impressions_share: float = 0.0
-    purchases_share: float = 0.0
+        Returns:
+            List of values for the row
+        """
+        row = [
+            self.rank,
+            self.keyword,
+            "YES" if self.in_title else "NO",
+            "YES" if self.in_backend else "NO",
+        ]
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for sheet output."""
-        return {
-            "Search Query": self.search_query,
-            "ASIN": self.asin,
-            "ASIN Price": self.asin_price,
-            "Market Price": self.market_price,
-            "Price Diff %": self.price_diff_percent,
-            "Severity": self.severity.value,
-            "Imp Share": self.impressions_share,
-            "Purchase Share": self.purchases_share,
-        }
+        # Add weekly metrics
+        for week in weeks_to_include:
+            metrics = self.weekly_metrics.get(week, {})
+            row.extend([
+                metrics.get("volume", ""),
+                metrics.get("imp_share", ""),
+                metrics.get("click_share", ""),
+                metrics.get("purchase_share", ""),
+                metrics.get("opportunity_score", ""),
+                metrics.get("rank_status", ""),
+            ])
 
+        # Add alerts
+        row.append(" | ".join(self.alerts) if self.alerts else "")
 
-@dataclass
-class ASINSummary:
-    """Summary statistics for an ASIN."""
-    asin: str
-    product_name: str = ""
-    total_keywords: int = 0
-    bread_butter_count: int = 0
-    opportunities_count: int = 0
-    leaks_count: int = 0
-    price_flagged_count: int = 0
-    health_score: float = 0.0
-    last_updated: date | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for sheet output."""
-        return {
-            "ASIN": self.asin,
-            "Product Name": self.product_name,
-            "Total Keywords": self.total_keywords,
-            "Bread & Butter": self.bread_butter_count,
-            "Opportunities": self.opportunities_count,
-            "Leaks": self.leaks_count,
-            "Price Flagged": self.price_flagged_count,
-            "Health Score": self.health_score,
-            "Last Updated": self.last_updated.isoformat() if self.last_updated else "",
-        }
-
-
-@dataclass
-class KeywordDiagnostic:
-    """Diagnostic analysis for a keyword."""
-    search_query: str
-    asin: str
-    diagnostic_type: DiagnosticType
-    rank_status: RankStatus
-    opportunity_score: float
-    search_volume: int = 0
-    impressions_share: float = 0.0
-    clicks_share: float = 0.0
-    purchases_share: float = 0.0
-    recommended_fix: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for sheet output."""
-        return {
-            "Search Query": self.search_query,
-            "ASIN": self.asin,
-            "Diagnostic": self.diagnostic_type.value,
-            "Rank Status": self.rank_status.value,
-            "Opportunity Score": self.opportunity_score,
-            "Volume": self.search_volume,
-            "Imp Share": self.impressions_share,
-            "Click Share": self.clicks_share,
-            "Purchase Share": self.purchases_share,
-            "Recommended Fix": self.recommended_fix,
-        }
-
-
-@dataclass
-class KeywordPlacement:
-    """Keyword placement recommendation."""
-    search_query: str
-    asin: str
-    placement: PlacementTarget
-    priority: int
-    search_volume: int = 0
-    clicks_share: float = 0.0
-    reasoning: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for sheet output."""
-        return {
-            "Search Query": self.search_query,
-            "ASIN": self.asin,
-            "Placement": self.placement.value,
-            "Priority": self.priority,
-            "Volume": self.search_volume,
-            "Click Share": self.clicks_share,
-            "Reasoning": self.reasoning,
-        }
+        return row

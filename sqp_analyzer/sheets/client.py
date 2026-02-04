@@ -1,7 +1,6 @@
-"""Google Sheets client for reading and writing SQP data."""
+"""Google Sheets client for reading and writing quarterly tracker data."""
 
 from typing import Any
-from datetime import date
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -44,9 +43,9 @@ class SheetsClient:
         """Read parent ASINs from the master tab.
 
         Supports columns:
-        - Brand, Product Name, Sheet Name, ASIN, Variation ASIN, Status
+        - Brand, Product Name, Sheet Name, ASIN, Variation ASIN, SKU, Status
 
-        Returns list of dicts with keys: asin, variation_asin, active, name, brand, sheet_name
+        Returns list of dicts with keys: asin, variation_asin, sku, active, name, brand, sheet_name
         """
         spreadsheet = self._get_spreadsheet()
         worksheet = spreadsheet.worksheet(self.config.master_tab_name)
@@ -79,6 +78,7 @@ class SheetsClient:
             asins.append({
                 "asin": str(asin).strip().upper(),
                 "variation_asin": str(normalized.get("variation_asin", "")).strip().upper(),
+                "sku": str(normalized.get("sku", "")).strip(),
                 "active": active,
                 "name": normalized.get("product_name", normalized.get("name", "")),
                 "brand": normalized.get("brand", ""),
@@ -87,13 +87,13 @@ class SheetsClient:
 
         return asins
 
-    def get_active_asins(self) -> list[str]:
-        """Get list of active parent ASINs."""
+    def get_active_asins(self) -> list[dict[str, Any]]:
+        """Get list of active ASINs with their metadata."""
         asins = self.read_asins()
-        return [a["asin"] for a in asins if a.get("active", True)]
+        return [a for a in asins if a.get("active", True)]
 
     def _get_or_create_worksheet(
-        self, name: str, rows: int = 1000, cols: int = 20
+        self, name: str, rows: int = 1000, cols: int = 100
     ) -> gspread.Worksheet:
         """Get existing worksheet or create new one."""
         spreadsheet = self._get_spreadsheet()
@@ -102,226 +102,79 @@ class SheetsClient:
         except gspread.WorksheetNotFound:
             return spreadsheet.add_worksheet(title=name, rows=rows, cols=cols)
 
-    def write_weekly_data(
-        self,
-        week_date: date,
-        data: list[dict[str, Any]],
-        headers: list[str] | None = None,
-    ) -> None:
-        """Write weekly SQP data to a tab.
+    def get_quarterly_tracker(self, tab_name: str) -> list[list[Any]] | None:
+        """Read existing quarterly tracker data.
 
-        Creates tab named SQP-YYYY-WW (e.g., SQP-2025-05).
+        Args:
+            tab_name: Tab name (e.g., 'Q1-B0CSH12L5P')
+
+        Returns:
+            All values from the tab, or None if tab doesn't exist
         """
-        year, week_num, _ = week_date.isocalendar()
-        tab_name = f"SQP-{year}-{week_num:02d}"
+        spreadsheet = self._get_spreadsheet()
+        try:
+            worksheet = spreadsheet.worksheet(tab_name)
+            return worksheet.get_all_values()
+        except gspread.WorksheetNotFound:
+            return None
 
-        if headers is None:
-            headers = [
-                "Search Query",
-                "Volume",
-                "Score",
-                "Imp Total",
-                "Imp ASIN",
-                "Imp Share",
-                "Click Total",
-                "Click ASIN",
-                "Click Share",
-                "Purchase Total",
-                "Purchase ASIN",
-                "Purchase Share",
-                "ASIN Price",
-                "Market Price",
-            ]
-
-        worksheet = self._get_or_create_worksheet(tab_name, rows=len(data) + 100)
-
-        # Clear existing content and write new
-        worksheet.clear()
-
-        if not data:
-            worksheet.update("A1", [headers])
-            return
-
-        # Build rows
-        rows = [headers]
-        for record in data:
-            row = [record.get(h, "") for h in headers]
-            rows.append(row)
-
-        worksheet.update("A1", rows)
-
-    def write_categorized_keywords(
+    def write_quarterly_tracker(
         self,
         tab_name: str,
-        keywords: list[dict[str, Any]],
         headers: list[str],
+        rows: list[list[Any]],
     ) -> None:
-        """Write categorized keywords to a specific tab."""
-        worksheet = self._get_or_create_worksheet(tab_name, rows=len(keywords) + 100)
-        worksheet.clear()
+        """Write quarterly tracker data to a tab.
 
-        if not keywords:
-            worksheet.update("A1", [headers])
-            return
-
-        rows = [headers]
-        for kw in keywords:
-            row = [kw.get(h, "") for h in headers]
-            rows.append(row)
-
-        worksheet.update("A1", rows)
-
-    def write_summary(self, summary_data: list[dict[str, Any]]) -> None:
-        """Write summary dashboard to SQP-Summary tab."""
-        headers = [
-            "ASIN",
-            "Product Name",
-            "Total Keywords",
-            "Bread & Butter",
-            "Opportunities",
-            "Leaks",
-            "Price Flagged",
-            "Health Score",
-            "Last Updated",
-        ]
-
-        worksheet = self._get_or_create_worksheet("SQP-Summary")
-        worksheet.clear()
-
-        rows = [headers]
-        for record in summary_data:
-            rows.append([record.get(h, "") for h in headers])
-
-        worksheet.update("A1", rows)
-
-    def write_trends(self, trends: list[dict[str, Any]]) -> None:
-        """Write 12-week trend data to SQP-Trends tab."""
-        # Dynamic headers based on weeks available
-        base_headers = ["Search Query", "ASIN"]
-        week_headers = []
-
-        if trends:
-            # Extract week columns from first record
-            sample = trends[0]
-            week_headers = [k for k in sample.keys() if k.startswith("Week ")]
-            week_headers.sort()
-
-        headers = base_headers + week_headers + ["Trend Direction", "Growth %"]
-
-        worksheet = self._get_or_create_worksheet("SQP-Trends", rows=len(trends) + 100)
-        worksheet.clear()
-
-        rows = [headers]
-        for record in trends:
-            row = [record.get(h, "") for h in headers]
-            rows.append(row)
-
-        worksheet.update("A1", rows)
-
-    def write_price_flags(self, flags: list[dict[str, Any]]) -> None:
-        """Write price competitiveness flags to SQP-PriceFlags tab."""
-        headers = [
-            "Search Query",
-            "ASIN",
-            "ASIN Price",
-            "Market Price",
-            "Price Diff %",
-            "Severity",
-            "Imp Share",
-            "Purchase Share",
-        ]
-
-        worksheet = self._get_or_create_worksheet("SQP-PriceFlags")
-        worksheet.clear()
-
-        rows = [headers]
-        for record in flags:
-            rows.append([record.get(h, "") for h in headers])
-
-        worksheet.update("A1", rows)
-
-    def write_diagnostics(self, diagnostics: list[dict[str, Any]]) -> None:
-        """Write keyword diagnostics to SQP-Diagnostics tab."""
-        headers = [
-            "Search Query",
-            "ASIN",
-            "Diagnostic",
-            "Rank Status",
-            "Opportunity Score",
-            "Volume",
-            "Imp Share",
-            "Click Share",
-            "Purchase Share",
-            "Recommended Fix",
-        ]
+        Args:
+            tab_name: Tab name (e.g., 'Q1-B0CSH12L5P')
+            headers: Header row
+            rows: Data rows
+        """
+        # Calculate needed columns (headers + some buffer)
+        num_cols = max(len(headers), 100)
 
         worksheet = self._get_or_create_worksheet(
-            "SQP-Diagnostics", rows=len(diagnostics) + 100
+            tab_name, rows=len(rows) + 50, cols=num_cols
         )
         worksheet.clear()
 
-        rows = [headers]
-        for record in diagnostics:
-            rows.append([record.get(h, "") for h in headers])
+        all_rows = [headers] + rows
+        worksheet.update(values=all_rows, range_name="A1")
 
-        worksheet.update("A1", rows)
+    def update_quarterly_tracker_row(
+        self,
+        tab_name: str,
+        row_num: int,
+        values: list[Any],
+        start_col: int = 1,
+    ) -> None:
+        """Update a specific row in the quarterly tracker.
 
-    def write_placements(self, placements: list[dict[str, Any]]) -> None:
-        """Write keyword placement recommendations to SQP-Placements tab."""
-        headers = [
-            "Search Query",
-            "ASIN",
-            "Placement",
-            "Priority",
-            "Volume",
-            "Click Share",
-            "Reasoning",
-        ]
+        Args:
+            tab_name: Tab name
+            row_num: Row number (1-indexed)
+            values: Values to write
+            start_col: Starting column (1-indexed, default A)
+        """
+        spreadsheet = self._get_spreadsheet()
+        worksheet = spreadsheet.worksheet(tab_name)
 
-        worksheet = self._get_or_create_worksheet(
-            "SQP-Placements", rows=len(placements) + 100
-        )
-        worksheet.clear()
+        # Convert column number to letter
+        end_col = start_col + len(values) - 1
 
-        rows = [headers]
-        for record in placements:
-            rows.append([record.get(h, "") for h in headers])
+        def col_to_letter(col: int) -> str:
+            result = ""
+            while col > 0:
+                col, remainder = divmod(col - 1, 26)
+                result = chr(65 + remainder) + result
+            return result
 
-        worksheet.update("A1", rows)
+        start_letter = col_to_letter(start_col)
+        end_letter = col_to_letter(end_col)
 
-    def write_opportunity_ranking(self, opportunities: list[dict[str, Any]]) -> None:
-        """Write top opportunities to SQP-TopOpportunities tab."""
-        headers = [
-            "Rank",
-            "Search Query",
-            "ASIN",
-            "Opportunity Score",
-            "Volume",
-            "Imp Share",
-            "Diagnostic",
-            "Recommended Fix",
-        ]
-
-        worksheet = self._get_or_create_worksheet(
-            "SQP-TopOpportunities", rows=len(opportunities) + 100
-        )
-        worksheet.clear()
-
-        rows = [headers]
-        for i, record in enumerate(opportunities, 1):
-            row = [
-                i,  # Rank
-                record.get("Search Query", ""),
-                record.get("ASIN", ""),
-                record.get("Opportunity Score", ""),
-                record.get("Volume", ""),
-                record.get("Imp Share", ""),
-                record.get("Diagnostic", ""),
-                record.get("Recommended Fix", ""),
-            ]
-            rows.append(row)
-
-        worksheet.update("A1", rows)
+        range_name = f"{start_letter}{row_num}:{end_letter}{row_num}"
+        worksheet.update(values=[values], range_name=range_name)
 
     def test_connection(self) -> bool:
         """Test connection to Google Sheets."""
