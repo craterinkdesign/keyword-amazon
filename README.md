@@ -274,7 +274,8 @@ When running full analysis (`--import-csv` without tracker), keywords are catego
     ├── parsers.py            # Data parsing
     ├── analyzers/            # Analysis algorithms
     └── commands/
-        └── fetch_sqp_data.py # Fetch SQP data via SP-API
+        ├── fetch_sqp_data.py # Fetch SQP data via SP-API
+        └── analyze_sqp.py    # Analyze SQP data and write to Sheets
 ```
 
 ## SP-API SQP Fetching
@@ -314,3 +315,52 @@ python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX --wait
 - Brand Analytics reports take **30-60 minutes** to process
 - Weekly reports must start on a **Sunday**
 - Reports show search queries, impressions, clicks, and purchase data for your ASIN
+
+## SQP Analysis Command
+
+The `analyze_sqp` command fetches a completed SQP report, runs diagnostic and placement analysis, and writes results to Google Sheets.
+
+### Usage
+
+```bash
+# Analyze a completed report and write to Google Sheets
+python -m sqp_analyzer.commands.analyze_sqp --report-id REPORT_ID
+
+# Test Google Sheets connection
+python -m sqp_analyzer.commands.analyze_sqp --test-sheets
+```
+
+### Workflow
+
+1. Request a report: `python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX`
+2. Wait 30-60 minutes for processing
+3. Check status: `python -m sqp_analyzer.commands.fetch_sqp_data --check REPORT_ID`
+4. Once DONE, analyze: `python -m sqp_analyzer.commands.analyze_sqp --report-id REPORT_ID`
+
+### Output Tabs
+
+The command creates/updates these Google Sheets tabs:
+
+| Tab | Description |
+|-----|-------------|
+| **SQP-Diagnostics** | All keywords with diagnostic type, rank status, opportunity score |
+| **SQP-Placements** | Keyword placement recommendations (Title/Bullets/Backend/Description) |
+| **SQP-TopOpportunities** | Top 20 keywords ranked by opportunity score |
+
+### Diagnostic Types
+
+| Type | Meaning | Fix |
+|------|---------|-----|
+| **Ghost** | High volume but invisible (not ranking) | Add to listing or run PPC |
+| **Window Shopper** | Seen but not clicked | Improve main image/title |
+| **Price Problem** | Clicked but not bought | Check pricing vs competitors |
+| **Healthy** | No issues detected | Maintain strategy |
+
+### Placement Recommendations
+
+| Placement | Criteria | Priority |
+|-----------|----------|----------|
+| **Title** | Top 5% volume OR (top 20% + good click share) | Highest |
+| **Bullets** | 50-80% volume percentile | High |
+| **Backend** | 20-50% volume percentile | Medium |
+| **Description** | Bottom 20% volume | Lower |
