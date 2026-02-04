@@ -1,7 +1,15 @@
 """Analysis algorithms for SQP data."""
 
 from .categorizer import KeywordCategorizer
-from .trend_tracker import TrendTracker
+from .diagnostic import DiagnosticAnalyzer
+from .placement import PlacementRecommender
 from .price_benchmark import PriceBenchmark
+from .trend_tracker import TrendTracker
 
-__all__ = ["KeywordCategorizer", "TrendTracker", "PriceBenchmark"]
+__all__ = [
+    "DiagnosticAnalyzer",
+    "KeywordCategorizer",
+    "PlacementRecommender",
+    "PriceBenchmark",
+    "TrendTracker",
+]

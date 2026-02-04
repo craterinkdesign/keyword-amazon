@@ -148,7 +148,31 @@ PRICE_WARNING_THRESHOLD=10.0
 PRICE_CRITICAL_THRESHOLD=20.0
 ```
 
-### 3. Export SQP Data from Amazon
+### 3. Get SQP Data from Amazon
+
+**Option A: API (Recommended)**
+
+Fetch SQP data directly via the SP-API:
+
+```bash
+# Request a new SQP report
+python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX
+
+# Check report status (reports take 30-60 min to process)
+python -m sqp_analyzer.commands.fetch_sqp_data --check REPORT_ID
+
+# List recent reports
+python -m sqp_analyzer.commands.fetch_sqp_data --list
+```
+
+Requires SP-API credentials in `.env`:
+```ini
+SP_API_CLIENT_ID=amzn1.application-oa2-client.xxx
+SP_API_CLIENT_SECRET=amzn1.oa2-cs.v1.xxx
+SP_API_REFRESH_TOKEN=Atzr|xxx
+```
+
+**Option B: CSV Export**
 
 1. Go to **Seller Central** → **Brands** → **Brand Analytics**
 2. Select **Search Query Performance**
@@ -248,5 +272,45 @@ When running full analysis (`--import-csv` without tracker), keywords are catego
     ├── tracker.py            # Weekly keyword tracking
     ├── importers.py          # CSV/Excel import
     ├── parsers.py            # Data parsing
-    └── analyzers/            # Analysis algorithms
+    ├── analyzers/            # Analysis algorithms
+    └── commands/
+        └── fetch_sqp_data.py # Fetch SQP data via SP-API
 ```
+
+## SP-API SQP Fetching
+
+The `fetch_sqp_data` command fetches Search Query Performance data directly from Amazon's Brand Analytics API.
+
+### Usage
+
+```bash
+# Test API connection
+python -m sqp_analyzer.commands.fetch_sqp_data --test-connection
+
+# Request new report (uses last complete week)
+python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX
+
+# Request with specific dates (start must be Sunday)
+python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX \
+    --start-date 2026-01-25 --end-date 2026-01-31
+
+# List recent reports
+python -m sqp_analyzer.commands.fetch_sqp_data --list
+
+# Check status and download completed report
+python -m sqp_analyzer.commands.fetch_sqp_data --check REPORT_ID
+
+# Request and wait for completion (30-60 min)
+python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX --wait
+```
+
+### Requirements
+
+- Amazon Brand Registry enrollment
+- SP-API credentials (LWA app ID, secret, refresh token)
+
+### Notes
+
+- Brand Analytics reports take **30-60 minutes** to process
+- Weekly reports must start on a **Sunday**
+- Reports show search queries, impressions, clicks, and purchase data for your ASIN
