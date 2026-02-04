@@ -1,6 +1,6 @@
-# Amazon SQP Keyword Tracker
+# Amazon SQP Quarterly Keyword Tracker
 
-Track your top Amazon keywords over 12 weeks and get alerts when action is needed.
+Track your top 10 Amazon keywords per quarter with full metrics and alerts.
 
 ## Quick Start
 
@@ -8,12 +8,48 @@ Track your top Amazon keywords over 12 weeks and get alerts when action is neede
 # Install dependencies
 pip install -r requirements.txt
 
-# First time: Import CSV and set up your top 10 keywords
-python -m sqp_analyzer.main --import-csv "your_sqp_export.csv" --asin B0XXXXXXXX
+# Start tracking for an ASIN (fetches all weeks in current quarter)
+python -m sqp_analyzer.commands.quarterly_tracker --start --asin B0XXXXXXXX
 
-# Weekly: Update tracker with new data
-python -m sqp_analyzer.tracker "new_week_sqp_export.csv"
+# Weekly update
+python -m sqp_analyzer.commands.quarterly_tracker --update --asin B0XXXXXXXX
+
+# Update all ASINs from master list
+python -m sqp_analyzer.commands.quarterly_tracker --update-all
 ```
+
+## How It Works
+
+The quarterly tracker:
+1. **Locks in your top 10 keywords** at the start of each quarter (by purchase volume)
+2. **Fetches all weeks** from Q start through current week
+3. **Tracks 6 metrics per week**: Volume, Imp%, Click%, Purchase%, Opportunity Score, Rank Status
+4. **Detects placement changes** if SKU is provided (keyword dropped from title/backend)
+5. **Alerts** when keywords drop from your listing
+
+## Google Sheets Structure
+
+| Tab | Purpose |
+|-----|---------|
+| `ASINs` | Master list of ASINs to track (with optional SKU column) |
+| `Q{N}-{ASIN}` | Quarterly tracker (e.g., `Q1-B0CSH12L5P`) |
+
+### Quarterly Tracker Columns
+
+| Column | Description |
+|--------|-------------|
+| Rank | Locked position (1-10) based on initial week's volume |
+| Keyword | Search query (locked for quarter) |
+| In Title | Auto-detected: YES/NO (requires SKU) |
+| In Backend | Auto-detected: YES/NO (requires SKU) |
+| W01 Vol | Week 1 search volume |
+| W01 Imp% | Week 1 impression share |
+| W01 Clk% | Week 1 click share |
+| W01 Pur% | Week 1 purchase share |
+| W01 Opp | Week 1 opportunity score |
+| W01 Rank | Week 1 rank status |
+| ... | (repeat for W02-W13) |
+| Alert | Placement drop alerts |
 
 ## Understanding the Metrics
 
@@ -28,418 +64,190 @@ Search Volume → Impressions → Clicks → Purchases
 | Metric | Question It Answers | If It Drops... |
 |--------|---------------------|----------------|
 | **Volume** | Is this keyword still popular? | Market is shifting - find new keywords |
-| **Impressions Share** | Are shoppers seeing you? | SEO/PPC issue - boost your ads |
-| **Click Share** | Are they clicking you? | Listing issue - fix image/title/price |
-| **Purchase Share** | Are they buying from you? | Competitor winning - check reviews/price |
+| **Imp%** | Are shoppers seeing you? | SEO/PPC issue - boost visibility |
+| **Click%** | Are they clicking you? | Listing issue - fix image/title/price |
+| **Purchase%** | Are they buying from you? | Competitor winning - check reviews/price |
 
-### What We Track
+### Rank Status
 
-The tracker monitors **Volume** and **Purchase Share** - the two most actionable metrics:
+Based on impression share:
 
-| Alert | Trigger | What It Means | Action |
-|-------|---------|---------------|--------|
-| 📉 Vol -XX% | Volume dropped >30% | Keyword losing popularity | Find trending replacement keywords |
-| 📉 Purch -XX% | Purchase share dropped >20% | Losing sales to competitors | Investigate: check price, reviews, listing |
-| ❌ Not in results | Keyword disappeared | You're no longer ranking | Major issue - review SEO/PPC strategy |
+| Status | Imp Share | Meaning |
+|--------|-----------|---------|
+| `top_3` | ≥20% | Ranking in top 3 positions |
+| `page_1_high` | 10-20% | Upper page 1 |
+| `page_1_low` | 1-10% | Lower page 1 |
+| `invisible` | <1% | Not ranking for this keyword |
 
-### Diagnostic Metrics
+### Opportunity Score
 
-When purchase share drops, check these to find the root cause:
+Higher score = more opportunity for improvement (0-100):
 
-| If This Dropped | The Problem Is | Fix |
-|-----------------|----------------|-----|
-| Impressions Share | Visibility | Increase PPC bids, improve SEO |
-| Click Share | Appeal | Better main image, title, or lower price |
-| Purchase Share only | Conversion | Reviews, A+ content, price competitiveness |
-
----
-
-## Deep Dive: How To Read The Numbers
-
-### Search Volume Explained
-
-**What it is:** How many people searched that exact term on Amazon this week.
-
-**Example fluctuations:**
-```
-Week 1: "mg scoop" → 500 searches
-Week 2: "mg scoop" → 480 searches  ← Normal fluctuation (ignore)
-Week 3: "mg scoop" → 250 searches  ← 📉 50% drop (ALERT!)
-```
-
-**Why volume drops:**
-- **Seasonal** - Summer vs winter products
-- **Trend died** - Think fidget spinners in 2018
-- **Language shift** - People started using different words
-
-**What to do:** If volume dies, find what NEW keyword people are using instead. Check Amazon's search suggestions or your SQP report for rising terms.
-
-### Purchase Share % Explained
-
-**What it is:** Of everyone who BOUGHT something after searching this keyword, what percentage bought YOUR product.
-
-**Example:**
-```
-100 people search "mg scoop"
- └─→ 40 people buy something (60 left without buying)
-      └─→ 16 buy YOUR product
-      └─→ 24 buy COMPETITOR products
-
-Your Purchase Share = 16 ÷ 40 = 40%
-```
-
-**Why purchase share drops:**
-- Competitor **lowered their price**
-- Competitor **got more/better reviews**
-- Your listing got worse (bad image, out of stock, lost Buy Box)
-- **New competitor** entered the market
-
-**What to do:** Investigate who's stealing your sales. Check the top 3 competitors for that keyword - compare their price, reviews, and main image to yours.
-
-### Real Example
-
-If your report shows:
-
-| Keyword | Score | Volume | Purchase % |
-|---------|-------|--------|------------|
-| mg scoop | 3 | 52 | 66.7% |
-
-This means:
-- Amazon ranks it your **#3 most important keyword**
-- **52 people** searched it this week
-- Of everyone who bought after searching this, **66.7% bought from YOU**
-
-**That's strong!** If next week it drops to 33%, someone is stealing half your sales on this keyword. Time to investigate.
-
-### The Two Alerts Summarized
-
-| Alert | What Happened | What To Do |
-|-------|---------------|------------|
-| 📉 Vol -30% | Fewer people searching this term | Find what keywords they're using NOW |
-| 📉 Purch -20% | Same searches, but competitors winning more | Check competitor price/reviews/listing |
-
----
+| Diagnostic | Multiplier | Meaning |
+|------------|------------|---------|
+| Ghost | 2.0x | High volume, not ranking - biggest opportunity |
+| Window Shopper | 1.5x | Seen but not clicked - listing needs work |
+| Price Problem | 1.3x | Clicked but not bought - check pricing |
+| Healthy | 0.5x | Already performing well |
 
 ## Setup
 
-### 1. Google Sheets
-
-1. Create a Google Sheet
-2. Create a service account at [Google Cloud Console](https://console.cloud.google.com/)
-3. Download credentials as `google-credentials.json`
-4. Share your Google Sheet with the service account email
-
-### 2. Configuration
+### 1. SP-API Credentials
 
 Create `.env` file:
 
 ```ini
-SPREADSHEET_ID=your_google_sheet_id
-MASTER_TAB_NAME=ASINs
+SP_API_CLIENT_ID=amzn1.application-oa2-client.xxx
+SP_API_CLIENT_SECRET=amzn1.oa2-cs.v1.xxx
+SP_API_REFRESH_TOKEN=Atzr|xxx
+AWS_ACCESS_KEY=your_aws_access_key
+AWS_SECRET_KEY=your_aws_secret_key
+SP_API_ROLE_ARN=arn:aws:iam::xxx:role/xxx
 
-# Thresholds (optional)
-BREAD_BUTTER_MIN_PURCHASE_SHARE=10.0
-OPPORTUNITY_MAX_IMP_SHARE=5.0
-OPPORTUNITY_MIN_PURCHASE_SHARE=5.0
-LEAK_MIN_IMP_SHARE=5.0
-LEAK_MAX_CLICK_SHARE=2.0
-LEAK_MAX_PURCHASE_SHARE=2.0
-PRICE_WARNING_THRESHOLD=10.0
-PRICE_CRITICAL_THRESHOLD=20.0
+# For listing content lookup (title/backend detection)
+SELLER_ID=your_seller_id
 ```
 
-### 3. Get SQP Data from Amazon
+### 2. Google Sheets
 
-**Option A: API (Recommended)**
+```ini
+SPREADSHEET_ID=your_google_sheet_id
+MASTER_TAB_NAME=ASINs
+GOOGLE_CREDENTIALS_PATH=google-credentials.json
+```
 
-Fetch SQP data directly via the SP-API:
+1. Create a Google Sheet with an `ASINs` tab
+2. Add columns: `ASIN`, `SKU` (optional), `Status` (Active/Inactive)
+3. Create a service account at [Google Cloud Console](https://console.cloud.google.com/)
+4. Download credentials as `google-credentials.json`
+5. Share your Google Sheet with the service account email
+
+### 3. Optional Thresholds
+
+```ini
+# Rank status thresholds (impression share %)
+RANK_TOP_3_THRESHOLD=20.0
+RANK_PAGE_1_HIGH_THRESHOLD=10.0
+RANK_PAGE_1_LOW_THRESHOLD=1.0
+
+# Diagnostic thresholds
+GHOST_MIN_VOLUME=500
+GHOST_MAX_IMP_SHARE=1.0
+WINDOW_SHOPPER_MIN_IMP_SHARE=10.0
+WINDOW_SHOPPER_MAX_CLICK_SHARE=1.0
+PRICE_PROBLEM_MIN_IMP_SHARE=5.0
+```
+
+## Commands
+
+### Quarterly Tracker
 
 ```bash
-# Request a new SQP report
+# Start new quarter (fetches W01 through current week)
+python -m sqp_analyzer.commands.quarterly_tracker --start --asin B0XXXXXXXX
+
+# Start with SKU for title/backend detection
+python -m sqp_analyzer.commands.quarterly_tracker --start --asin B0XXXXXXXX --sku YOUR-SKU
+
+# Weekly update (adds new week's data)
+python -m sqp_analyzer.commands.quarterly_tracker --update --asin B0XXXXXXXX
+
+# Update all active ASINs from master list
+python -m sqp_analyzer.commands.quarterly_tracker --update-all
+
+# Test Google Sheets connection
+python -m sqp_analyzer.commands.quarterly_tracker --test-sheets
+```
+
+### Fetch SQP Data (Manual)
+
+```bash
+# Request new report
 python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX
 
-# Check report status (reports take 30-60 min to process)
+# Request and wait for completion
+python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX --wait
+
+# Check report status
 python -m sqp_analyzer.commands.fetch_sqp_data --check REPORT_ID
 
 # List recent reports
 python -m sqp_analyzer.commands.fetch_sqp_data --list
 ```
 
-Requires SP-API credentials in `.env`:
-```ini
-SP_API_CLIENT_ID=amzn1.application-oa2-client.xxx
-SP_API_CLIENT_SECRET=amzn1.oa2-cs.v1.xxx
-SP_API_REFRESH_TOKEN=Atzr|xxx
-```
-
-**Option B: CSV Export**
-
-1. Go to **Seller Central** → **Brands** → **Brand Analytics**
-2. Select **Search Query Performance**
-3. Choose your ASIN and date range (Weekly)
-4. Download CSV
-
-## 12-Week Tracking Cycle
-
-The tracker is designed for a 12-week observation period:
-
-```
-Week 1:  Set up top 10 keywords (locked in)
-         ↓
-Week 2-12: Run weekly tracker
-         ↓  - New columns added each week
-         ↓  - Alerts flag any drops
-         ↓  - See trends develop over time
-         ↓
-Week 12: Review full trend data
-         ↓
-Reset:   Start fresh with new top 10
-```
-
-**Keywords stay locked** for the full 12 weeks so you can see true trends, not just week-to-week noise.
-
-## Weekly Workflow
-
-1. **Download** new week's SQP CSV from Amazon
-2. **Run tracker**: `python -m sqp_analyzer.tracker "new_export.csv"`
-3. **Check alerts** in terminal and Google Sheet
-4. **Investigate** any drops using the diagnostic guide above
-
-## After 12 Weeks: Reset
-
-When you're ready to start fresh with new keywords:
+### Fetch Listing Content
 
 ```bash
-python -m sqp_analyzer.tracker --reset "latest_export.csv"
+# Fetch listing title, bullets, and backend keywords
+python -m sqp_analyzer.commands.fetch_listing --sku YOUR-SKU
 ```
 
-This will:
-- Archive your current watchlist (renamed with date)
-- Create new watchlist with current top 10 keywords
-- Start a fresh 12-week tracking cycle
+### Traffic & Sales Reports
 
-## Google Sheet Tabs
+```bash
+# Request traffic/sales report
+python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0XXXXXXXX --wait
 
-| Tab | Purpose |
-|-----|---------|
-| **ASINs** | Your products to track |
-| **Keyword Watchlist** | Top 10 keywords with weekly trend data |
-
-### Keyword Watchlist Columns
-
-| Column | Purpose |
-|--------|---------|
-| **Rank** | Amazon's Search Query Score (1 = most important) |
-| **Keyword** | The search term |
-| **In Title** | ☑ Checkbox - mark if you're using this keyword in your listing title |
-| **Score/Vol/Purch%** | Weekly metrics (new columns added each week) |
-| **Alert** | Empty if stable, shows warning when metrics drop |
-
-Use the **In Title** checkbox to track which of your top keywords you've actually included in your listing title. This helps you see if you're missing any important keywords.
-
-### Example Alert View
-
-```
-Keyword                        W05 Vol  W06 Vol  Purch%   Alert
-----------------------------------------------------------------
-10mg scoop                          57       28   37.5%   📉 Vol -51%
-milligram measuring spoons          88       88   37.5%
-mg scoop                            52       52   33.3%   📉 Purch -50%
+# Write to Google Sheets
+python -m sqp_analyzer.commands.analyze_traffic_sales --report-id REPORT_ID
 ```
 
-- `📉 Vol -XX%` → Keyword losing popularity (find replacement)
-- `📉 Purch -XX%` → Losing to competitors (investigate price/reviews)
+## Quarterly Workflow
 
-## Keyword Categories (Full Analysis)
+```
+Quarter Start (Week 1):
+├─ Run: --start --asin B0XXX
+├─ Fetches all complete weeks in quarter
+├─ Locks top 10 keywords by purchase volume
+└─ Creates Q{N}-{ASIN} tab with full history
 
-When running full analysis (`--import-csv` without tracker), keywords are categorized:
+Weekly (Week 2-13):
+├─ Run: --update --asin B0XXX (or --update-all)
+├─ Adds new week's metrics
+├─ Re-checks title/backend placement
+└─ Flags any alerts
 
-| Category | Criteria | Action |
-|----------|----------|--------|
-| **Bread & Butter** | Purchase Share ≥ 10% | Protect these - your money makers |
-| **Opportunity** | Low Impressions + High Purchase Share | Increase PPC - high conversion potential |
-| **Leak** | High Impressions + Low Clicks/Purchases | Fix listing - wasted visibility |
+Quarter End:
+├─ Review 13-week trends
+├─ Archive or keep tab for reference
+└─ Next quarter starts fresh with new top 10
+```
+
+## Alert Types
+
+| Alert | Trigger | Action |
+|-------|---------|--------|
+| `DROPPED FROM TITLE` | Keyword was in title, now isn't | Re-add keyword to title |
+| `DROPPED FROM BACKEND` | Keyword was in backend, now isn't | Re-add to backend keywords |
 
 ## Files
 
 ```
-├── .env                      # Your configuration
+├── .env                      # Configuration
 ├── google-credentials.json   # Google service account
 ├── requirements.txt          # Python dependencies
 │
 └── sqp_analyzer/
-    ├── main.py               # Full analysis
-    ├── tracker.py            # Weekly keyword tracking
-    ├── importers.py          # CSV/Excel import
-    ├── parsers.py            # Data parsing
-    ├── analyzers/            # Analysis algorithms
+    ├── config.py             # Configuration loader
+    ├── models.py             # Data models
+    │
+    ├── sheets/
+    │   └── client.py         # Google Sheets client
+    │
+    ├── amazon/               # SP-API helpers (auth, client)
+    │
     └── commands/
-        ├── fetch_sqp_data.py         # Fetch SQP data via SP-API
-        ├── fetch_traffic_sales.py    # Fetch traffic & sales by ASIN
-        ├── analyze_sqp.py            # Analyze SQP data and write to Sheets
-        └── analyze_traffic_sales.py  # Write traffic/sales to Sheets
+        ├── quarterly_tracker.py   # Main quarterly tracking
+        ├── fetch_listing.py       # Fetch listing content
+        ├── fetch_sqp_data.py      # Fetch SQP reports
+        ├── fetch_traffic_sales.py # Fetch traffic/sales
+        └── analyze_traffic_sales.py # Write traffic/sales to Sheets
 ```
 
-## SP-API SQP Fetching
+## Notes
 
-The `fetch_sqp_data` command fetches Search Query Performance data directly from Amazon's Brand Analytics API.
-
-### Usage
-
-```bash
-# Test API connection
-python -m sqp_analyzer.commands.fetch_sqp_data --test-connection
-
-# Request new report (uses last complete week)
-python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX
-
-# Request with specific dates (start must be Sunday)
-python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX \
-    --start-date 2026-01-25 --end-date 2026-01-31
-
-# List recent reports
-python -m sqp_analyzer.commands.fetch_sqp_data --list
-
-# Check status and download completed report
-python -m sqp_analyzer.commands.fetch_sqp_data --check REPORT_ID
-
-# Request and wait for completion (30-60 min)
-python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX --wait
-```
-
-### Requirements
-
-- Amazon Brand Registry enrollment
-- SP-API credentials (LWA app ID, secret, refresh token)
-
-### Notes
-
-- Brand Analytics reports take **30-60 minutes** to process
-- Weekly reports must start on a **Sunday**
-- Reports show search queries, impressions, clicks, and purchase data for your ASIN
-
-## SQP Analysis Command
-
-The `analyze_sqp` command fetches a completed SQP report, runs diagnostic and placement analysis, and writes results to Google Sheets.
-
-### Usage
-
-```bash
-# Analyze a completed report and write to Google Sheets
-python -m sqp_analyzer.commands.analyze_sqp --report-id REPORT_ID
-
-# Test Google Sheets connection
-python -m sqp_analyzer.commands.analyze_sqp --test-sheets
-```
-
-### Workflow
-
-1. Request a report: `python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXXXXXXX`
-2. Wait 30-60 minutes for processing
-3. Check status: `python -m sqp_analyzer.commands.fetch_sqp_data --check REPORT_ID`
-4. Once DONE, analyze: `python -m sqp_analyzer.commands.analyze_sqp --report-id REPORT_ID`
-
-### Output Tabs
-
-The command creates/updates these Google Sheets tabs:
-
-| Tab | Description |
-|-----|-------------|
-| **SQP-Diagnostics** | All keywords with diagnostic type, rank status, opportunity score |
-| **SQP-Placements** | Keyword placement recommendations (Title/Bullets/Backend/Description) |
-| **SQP-TopOpportunities** | Top 20 keywords ranked by opportunity score |
-
-### Diagnostic Types
-
-| Type | Meaning | Fix |
-|------|---------|-----|
-| **Ghost** | High volume but invisible (not ranking) | Add to listing or run PPC |
-| **Window Shopper** | Seen but not clicked | Improve main image/title |
-| **Price Problem** | Clicked but not bought | Check pricing vs competitors |
-| **Healthy** | No issues detected | Maintain strategy |
-
-### Placement Recommendations
-
-| Placement | Criteria | Priority |
-|-----------|----------|----------|
-| **Title** | Top 5% volume OR (top 20% + good click share) | Highest |
-| **Bullets** | 50-80% volume percentile | High |
-| **Backend** | 20-50% volume percentile | Medium |
-| **Description** | Bottom 20% volume | Lower |
-
-## Traffic and Sales Report
-
-The `fetch_traffic_sales` command fetches Business Report data (traffic and sales) by child ASIN.
-
-### Usage
-
-```bash
-# Request report for last 7 days (daily by child ASIN)
-python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0CSH12L5P
-
-# Request and wait for completion
-python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0CSH12L5P --wait
-
-# Weekly granularity instead of daily
-python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0CSH12L5P --date-granularity WEEK
-
-# Custom date range
-python -m sqp_analyzer.commands.fetch_traffic_sales --start-date 2026-01-01 --end-date 2026-01-31
-
-# Check status of pending report
-python -m sqp_analyzer.commands.fetch_traffic_sales --check REPORT_ID
-
-# List recent reports
-python -m sqp_analyzer.commands.fetch_traffic_sales --list
-```
-
-### Report Options
-
-| Option | Values | Default | Description |
-|--------|--------|---------|-------------|
-| `--date-granularity` | DAY, WEEK, MONTH | DAY | Time period aggregation |
-| `--asin-granularity` | PARENT, CHILD, SKU | CHILD | Product aggregation level |
-
-### Metrics Returned
-
-**Sales Metrics:**
-- Units Ordered
-- Ordered Product Sales ($)
-- Units Shipped
-- Orders Shipped
-- Refund Rate
-
-**Traffic Metrics:**
-- Page Views (browser + mobile)
-- Sessions
-- Buy Box Percentage
-- Unit Session Percentage
-
-### Notes
-
-- Reports typically take **5-15 minutes** to process
-- Data is available 72 hours after the period closes
-- Use `CHILD` granularity to see individual variation performance
-
-### Write to Google Sheets
-
-Use `analyze_traffic_sales` to write report data to Google Sheets:
-
-```bash
-# Write completed report to Google Sheets
-python -m sqp_analyzer.commands.analyze_traffic_sales --report-id REPORT_ID
-```
-
-### Workflow
-
-1. Request report: `python -m sqp_analyzer.commands.fetch_traffic_sales --asin B0XXXXXXXX`
-2. Wait 5-15 minutes for processing
-3. Check status: `python -m sqp_analyzer.commands.fetch_traffic_sales --check REPORT_ID`
-4. Once DONE, write to Sheets: `python -m sqp_analyzer.commands.analyze_traffic_sales --report-id REPORT_ID`
-
-### Output Tabs
-
-| Tab | Description |
-|-----|-------------|
-| **Traffic-ByDate** | Daily metrics: units, sales, sessions, page views, buy box % |
-| **Traffic-ByASIN** | Per-ASIN metrics: units, sales, sessions, buy box % |
+- **Quarter detection**: Q1 (Jan-Mar), Q2 (Apr-Jun), Q3 (Jul-Sep), Q4 (Oct-Dec)
+- **Week numbering**: W01-W13 within each quarter
+- **Report timing**: SQP reports take 30-60 minutes to process
+- **Listing lookup**: Requires `SELLER_ID` and SKU in ASINs tab
+- **Keywords locked**: Top 10 keywords stay fixed for the quarter to show true trends

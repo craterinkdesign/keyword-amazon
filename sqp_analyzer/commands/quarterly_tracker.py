@@ -115,6 +115,51 @@ def get_last_complete_week() -> tuple[date, date]:
     return last_sunday, last_saturday
 
 
+def get_quarter_weeks() -> list[tuple[int, date, date]]:
+    """Get all complete weeks in the current quarter up to now.
+
+    Returns:
+        List of (week_num, start_date, end_date) tuples
+    """
+    today = date.today()
+    quarter = (today.month - 1) // 3 + 1
+    year = today.year
+
+    # First day of quarter
+    quarter_start_month = (quarter - 1) * 3 + 1
+    quarter_start = date(year, quarter_start_month, 1)
+
+    # Find first Sunday of the quarter (or before if quarter starts mid-week)
+    days_to_sunday = (6 - quarter_start.weekday()) % 7
+    if days_to_sunday == 0 and quarter_start.weekday() != 6:
+        days_to_sunday = 7
+    first_sunday = quarter_start + timedelta(days=days_to_sunday)
+
+    # If quarter starts after Sunday, use the Sunday before
+    if first_sunday > quarter_start + timedelta(days=6):
+        first_sunday = first_sunday - timedelta(days=7)
+
+    # Get last complete Saturday
+    days_since_saturday = (today.weekday() + 2) % 7
+    if days_since_saturday == 0:
+        days_since_saturday = 7
+    last_saturday = today - timedelta(days=days_since_saturday)
+
+    weeks = []
+    week_num = 1
+    current_sunday = first_sunday
+
+    while current_sunday + timedelta(days=6) <= last_saturday:
+        week_end = current_sunday + timedelta(days=6)
+        weeks.append((week_num, current_sunday, week_end))
+        current_sunday = current_sunday + timedelta(days=7)
+        week_num += 1
+        if week_num > 13:
+            break
+
+    return weeks
+
+
 def fetch_sqp_report(credentials: dict, asin: str, start_date: date, end_date: date) -> dict | None:
     """Request and wait for SQP report.
 
@@ -383,7 +428,7 @@ def check_keyword_alerts(
 
 
 def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
-    """Initialize quarterly tracker with top 10 keywords.
+    """Initialize quarterly tracker with top 10 keywords and all weeks so far.
 
     Args:
         config: App configuration
@@ -396,37 +441,54 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     credentials = get_credentials()
     quarter, year = get_current_quarter()
     tab_name = get_tab_name(asin, quarter, year)
-    week_num = get_week_in_quarter()
-    week_label = f"W{week_num:02d}"
+
+    # Get all complete weeks in the quarter so far
+    quarter_weeks = get_quarter_weeks()
+    if not quarter_weeks:
+        print("[ERROR] No complete weeks in quarter yet")
+        return False
+
+    week_labels = [f"W{w[0]:02d}" for w in quarter_weeks]
+    current_week_label = week_labels[-1]
 
     print(f"\n{'='*60}")
     print(f"Starting Q{quarter} {year} tracker for ASIN: {asin}")
     print(f"Tab name: {tab_name}")
-    print(f"Current week: {week_label}")
+    print(f"Fetching weeks: {week_labels[0]} through {current_week_label} ({len(quarter_weeks)} weeks)")
     print('='*60)
 
-    # Fetch SQP data
-    start_date, end_date = get_last_complete_week()
-    report_data = fetch_sqp_report(credentials, asin, start_date, end_date)
+    # Fetch SQP data for all weeks
+    weekly_snapshots: dict[str, WeeklySnapshot] = {}
 
-    if not report_data:
-        print("[ERROR] Failed to fetch SQP data")
+    for week_num, start_date, end_date in quarter_weeks:
+        week_label = f"W{week_num:02d}"
+        print(f"\n--- Fetching {week_label} ({start_date} to {end_date}) ---")
+
+        report_data = fetch_sqp_report(credentials, asin, start_date, end_date)
+        if report_data:
+            snapshot = parse_report_to_snapshot(report_data)
+            if snapshot:
+                weekly_snapshots[week_label] = snapshot
+                print(f"  Loaded {len(snapshot.records)} keywords")
+            else:
+                print(f"  [WARNING] Could not parse {week_label} data")
+        else:
+            print(f"  [WARNING] Could not fetch {week_label} data")
+
+    if not weekly_snapshots:
+        print("[ERROR] Failed to fetch any SQP data")
         return False
 
-    snapshot = parse_report_to_snapshot(report_data)
-    if not snapshot:
-        print("[ERROR] Failed to parse SQP report")
-        return False
-
-    print(f"\n  Loaded {len(snapshot.records)} keywords")
+    # Use most recent week to determine top keywords
+    latest_snapshot = weekly_snapshots[current_week_label] if current_week_label in weekly_snapshots else list(weekly_snapshots.values())[-1]
 
     # Get top 10 keywords
-    top_keywords = get_top_keywords(snapshot)
+    top_keywords = get_top_keywords(latest_snapshot)
     if not top_keywords:
         print("[ERROR] No keywords with purchase data found")
         return False
 
-    print(f"  Selected top {len(top_keywords)} keywords by volume")
+    print(f"\n  Selected top {len(top_keywords)} keywords by volume from {current_week_label}")
 
     # Fetch listing content if SKU provided
     listing = None
@@ -438,43 +500,78 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
         else:
             print("  [WARNING] Could not fetch listing content")
 
-    # Build quarterly keywords with metrics
+    # Build quarterly keywords with metrics for all weeks
     quarterly_keywords: list[QuarterlyKeyword] = []
 
-    for rank, record in enumerate(top_keywords, 1):
+    for rank, latest_record in enumerate(top_keywords, 1):
+        keyword = latest_record.search_query
+        keyword_lower = keyword.lower()
+
         # Check keyword placement
         in_title = False
         in_backend = False
         if listing:
-            in_title, in_backend = listing.contains_keyword(record.search_query)
+            in_title, in_backend = listing.contains_keyword(keyword)
 
-        # Calculate metrics
-        diagnostic = get_diagnostic_type(record, config.thresholds)
-        opp_score = calculate_opportunity_score(record, diagnostic)
-        rank_status = get_rank_status(record.impressions_share, config.thresholds)
+        # Gather metrics for all weeks
+        weekly_metrics = {}
+        for week_label in week_labels:
+            if week_label in weekly_snapshots:
+                snapshot = weekly_snapshots[week_label]
+                # Find this keyword in the snapshot
+                record = None
+                for r in snapshot.records:
+                    if r.search_query.lower() == keyword_lower:
+                        record = r
+                        break
+
+                if record:
+                    diagnostic = get_diagnostic_type(record, config.thresholds)
+                    opp_score = calculate_opportunity_score(record, diagnostic)
+                    rank_status = get_rank_status(record.impressions_share, config.thresholds)
+
+                    weekly_metrics[week_label] = {
+                        "volume": record.search_volume,
+                        "imp_share": round(record.impressions_share, 1),
+                        "click_share": round(record.clicks_share, 1),
+                        "purchase_share": round(record.purchases_share, 1),
+                        "opportunity_score": opp_score,
+                        "rank_status": rank_status.value,
+                    }
+                else:
+                    # Keyword not in this week's data
+                    weekly_metrics[week_label] = {
+                        "volume": "-",
+                        "imp_share": "-",
+                        "click_share": "-",
+                        "purchase_share": "-",
+                        "opportunity_score": "-",
+                        "rank_status": "invisible",
+                    }
+            else:
+                # No data for this week
+                weekly_metrics[week_label] = {
+                    "volume": "-",
+                    "imp_share": "-",
+                    "click_share": "-",
+                    "purchase_share": "-",
+                    "opportunity_score": "-",
+                    "rank_status": "-",
+                }
 
         qk = QuarterlyKeyword(
             rank=rank,
-            keyword=record.search_query,
+            keyword=keyword,
             in_title=in_title,
             in_backend=in_backend,
-            weekly_metrics={
-                week_label: {
-                    "volume": record.search_volume,
-                    "imp_share": round(record.impressions_share, 1),
-                    "click_share": round(record.clicks_share, 1),
-                    "purchase_share": round(record.purchases_share, 1),
-                    "opportunity_score": opp_score,
-                    "rank_status": rank_status.value,
-                }
-            },
+            weekly_metrics=weekly_metrics,
             alerts=[],
         )
         quarterly_keywords.append(qk)
 
     # Build headers and rows
-    headers = build_headers([week_label])
-    rows = [qk.to_row([week_label]) for qk in quarterly_keywords]
+    headers = build_headers(week_labels)
+    rows = [qk.to_row(week_labels) for qk in quarterly_keywords]
 
     # Write to Google Sheets
     print(f"\n  Writing to Google Sheets: {tab_name}")
@@ -484,13 +581,14 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     # Print summary
     print(f"\n{'='*60}")
     print(f"Quarterly tracker initialized for Q{quarter} {year}")
+    print(f"Weeks included: {week_labels[0]} - {current_week_label}")
     print(f"{'='*60}")
     print(f"\n{'Rank':<4} {'Keyword':<35} {'Title':>6} {'Back':>6} {'Vol':>6}")
     print("-" * 65)
     for qk in quarterly_keywords:
         title_mark = "YES" if qk.in_title else "NO"
         backend_mark = "YES" if qk.in_backend else "NO"
-        vol = qk.weekly_metrics.get(week_label, {}).get("volume", 0)
+        vol = qk.weekly_metrics.get(current_week_label, {}).get("volume", 0)
         print(f"{qk.rank:<4} {qk.keyword[:33]:<35} {title_mark:>6} {backend_mark:>6} {vol:>6}")
 
     print(f"\nView results: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}")
