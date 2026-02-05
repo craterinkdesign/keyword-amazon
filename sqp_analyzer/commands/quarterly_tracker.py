@@ -41,6 +41,10 @@ from .fetch_listing import get_listing_content
 # Constants
 TOP_KEYWORDS_COUNT = 10
 METRICS_PER_WEEK = 6  # Vol, Imp%, Clk%, Pur%, Opp, Rank
+STATIC_COLS = 5  # ASIN, Rank, Keyword, In Title, In Backend
+VOLUME_DROP_THRESHOLD = 0.30
+DASHBOARD_TAB_NAME = "Dashboard"
+RANK_SEVERITY = {"top_3": 3, "page_1_high": 2, "page_1_low": 1, "invisible": 0}
 
 
 def get_credentials() -> dict:
@@ -475,6 +479,295 @@ def parse_consolidated_sheet(
     return result
 
 
+def extract_week_metrics(row_data: list, week_index: int) -> dict[str, Any] | None:
+    """Extract 6 metric values for a given week from a raw row.
+
+    Args:
+        row_data: Full row from the consolidated sheet
+        week_index: 0-based week index (0 = first week)
+
+    Returns:
+        Dict with volume, imp_share, click_share, purchase_share, opportunity_score,
+        rank_status — or None if data is missing/empty.
+    """
+    start = STATIC_COLS + week_index * METRICS_PER_WEEK
+    end = start + METRICS_PER_WEEK
+
+    if end > len(row_data):
+        return None
+
+    raw = row_data[start:end]
+
+    # Skip if all values are empty or dashes
+    if all(str(v).strip() in ("", "-") for v in raw):
+        return None
+
+    def to_float(val: Any) -> float | None:
+        s = str(val).strip()
+        if s in ("", "-"):
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    volume = to_float(raw[0])
+    if volume is None:
+        return None
+
+    return {
+        "volume": volume,
+        "imp_share": to_float(raw[1]),
+        "click_share": to_float(raw[2]),
+        "purchase_share": to_float(raw[3]),
+        "opportunity_score": to_float(raw[4]),
+        "rank_status": str(raw[5]).strip() if raw[5] else None,
+    }
+
+
+def detect_drastic_changes(
+    asin: str,
+    asin_data: dict[str, Any],
+    num_weeks: int,
+) -> list[dict[str, Any]]:
+    """Scan all keywords for one ASIN, return flagged entries with reasons.
+
+    Compares the last two weeks for volume drops and rank downgrades,
+    and checks the Alert column for placement drops.
+
+    Args:
+        asin: The ASIN identifier
+        asin_data: Parsed ASIN data from parse_consolidated_sheet
+        num_weeks: Number of weeks in the tracker
+
+    Returns:
+        List of dicts with: keyword, rank, reasons (list[str]),
+        curr_vol, curr_rank, prev_vol, prev_rank
+    """
+    flagged = []
+
+    for kw_info in asin_data["keywords"]:
+        row = kw_info["row_data"]
+        reasons: list[str] = []
+
+        curr_metrics = None
+        prev_metrics = None
+
+        if num_weeks >= 2:
+            curr_metrics = extract_week_metrics(row, num_weeks - 1)
+            prev_metrics = extract_week_metrics(row, num_weeks - 2)
+
+        curr_vol = curr_metrics["volume"] if curr_metrics else None
+        prev_vol = prev_metrics["volume"] if prev_metrics else None
+        curr_rank = curr_metrics["rank_status"] if curr_metrics else None
+        prev_rank = prev_metrics["rank_status"] if prev_metrics else None
+
+        # Check volume drop
+        if curr_vol is not None and prev_vol is not None and prev_vol > 0:
+            drop_pct = (prev_vol - curr_vol) / prev_vol
+            if drop_pct >= VOLUME_DROP_THRESHOLD:
+                pct_display = round(drop_pct * 100)
+                reasons.append(
+                    f"Volume -{pct_display}% ({int(prev_vol)} -> {int(curr_vol)})"
+                )
+
+        # Check rank downgrade
+        if (
+            curr_rank
+            and prev_rank
+            and curr_rank in RANK_SEVERITY
+            and prev_rank in RANK_SEVERITY
+        ):
+            if RANK_SEVERITY[curr_rank] < RANK_SEVERITY[prev_rank]:
+                reasons.append(f"Rank: {prev_rank} -> {curr_rank}")
+
+        # Check placement drops from Alert column (last column)
+        alert_val = str(row[-1]).strip() if row else ""
+        if "DROPPED FROM TITLE" in alert_val:
+            reasons.append("DROPPED FROM TITLE")
+        if "DROPPED FROM BACKEND" in alert_val:
+            reasons.append("DROPPED FROM BACKEND")
+
+        if reasons:
+            flagged.append(
+                {
+                    "keyword": kw_info["keyword"],
+                    "rank": kw_info["rank"],
+                    "reasons": reasons,
+                    "curr_vol": curr_vol,
+                    "curr_rank": curr_rank,
+                    "prev_vol": prev_vol,
+                    "prev_rank": prev_rank,
+                }
+            )
+
+    return flagged
+
+
+def build_asin_summary(
+    asin: str,
+    asin_data: dict[str, Any],
+    num_weeks: int,
+    flagged_keywords: list[dict[str, Any]],
+) -> list[Any]:
+    """Produce one summary row for the ASIN summary section.
+
+    Counts keywords by rank status (using most recent week), picks top alert,
+    and assigns a health label.
+
+    Args:
+        asin: The ASIN identifier
+        asin_data: Parsed ASIN data
+        num_weeks: Number of weeks in the tracker
+        flagged_keywords: List of flagged keyword dicts from detect_drastic_changes
+
+    Returns:
+        Row: [ASIN, Product Name, # Top 3, # Page 1 High, # Page 1 Low,
+              # Invisible, Top Alert, Health]
+    """
+    counts = {"top_3": 0, "page_1_high": 0, "page_1_low": 0, "invisible": 0}
+    total_kw = len(asin_data["keywords"])
+
+    for kw_info in asin_data["keywords"]:
+        row = kw_info["row_data"]
+        if num_weeks >= 1:
+            metrics = extract_week_metrics(row, num_weeks - 1)
+            if metrics and metrics["rank_status"] in counts:
+                counts[metrics["rank_status"]] += 1
+            else:
+                counts["invisible"] += 1
+        else:
+            counts["invisible"] += 1
+
+    # Pick top alert (first reason of first flagged keyword)
+    top_alert = ""
+    if flagged_keywords:
+        top_alert = flagged_keywords[0]["reasons"][0]
+
+    # Determine health label
+    if flagged_keywords:
+        health = "AT RISK"
+    elif total_kw > 0 and (counts["invisible"] / total_kw) > 0.5:
+        health = "WEAK"
+    elif total_kw > 0 and ((counts["top_3"] + counts["page_1_high"]) / total_kw) > 0.5:
+        health = "STRONG"
+    else:
+        health = "OK"
+
+    return [
+        asin,
+        asin_data["name"],
+        counts["top_3"],
+        counts["page_1_high"],
+        counts["page_1_low"],
+        counts["invisible"],
+        top_alert,
+        health,
+    ]
+
+
+def build_dashboard(
+    quarter_data: dict[str, dict[str, Any]],
+    num_weeks: int,
+) -> tuple[list[list[str]], list[list[Any]], list[list[Any]]]:
+    """Orchestrator: build both dashboard sections.
+
+    Args:
+        quarter_data: Parsed data from parse_consolidated_sheet
+        num_weeks: Number of weeks in the tracker
+
+    Returns:
+        Tuple of (summary_headers, summary_rows, flagged_headers_and_rows)
+        where flagged_headers_and_rows includes the header row followed by data rows.
+    """
+    summary_headers = [
+        "ASIN",
+        "Product Name",
+        "# Top 3",
+        "# Page 1 High",
+        "# Page 1 Low",
+        "# Invisible",
+        "Top Alert",
+        "Health",
+    ]
+    flagged_headers = [
+        "ASIN",
+        "Keyword",
+        "Rank",
+        "Reasons",
+        "Curr Vol",
+        "Curr Rank",
+        "Prev Vol",
+        "Prev Rank",
+    ]
+
+    summary_rows: list[list[Any]] = []
+    flagged_rows: list[list[Any]] = []
+
+    for asin, asin_data in quarter_data.items():
+        flagged = detect_drastic_changes(asin, asin_data, num_weeks)
+        summary_row = build_asin_summary(asin, asin_data, num_weeks, flagged)
+        summary_rows.append(summary_row)
+
+        for f in flagged:
+            flagged_rows.append(
+                [
+                    asin,
+                    f["keyword"],
+                    f["rank"],
+                    " | ".join(f["reasons"]),
+                    f["curr_vol"] if f["curr_vol"] is not None else "",
+                    f["curr_rank"] or "",
+                    f["prev_vol"] if f["prev_vol"] is not None else "",
+                    f["prev_rank"] or "",
+                ]
+            )
+
+    return summary_headers, summary_rows, [flagged_headers] + flagged_rows
+
+
+def generate_dashboard(sheets: SheetsClient, tab_name: str) -> None:
+    """Read Q tab, build dashboard data, write Dashboard tab.
+
+    Args:
+        sheets: SheetsClient instance
+        tab_name: Q tab name to read from (e.g., 'Q1')
+    """
+    all_values = sheets.get_quarterly_tracker(tab_name)
+    if not all_values or len(all_values) < 2:
+        print("[INFO] No data in Q tab, skipping dashboard generation")
+        return
+
+    quarter_data = parse_consolidated_sheet(all_values)
+    if not quarter_data:
+        print("[INFO] No ASIN data parsed, skipping dashboard generation")
+        return
+
+    # Determine number of weeks from headers
+    headers = all_values[0]
+    week_count = sum(1 for h in headers if h.endswith(" Vol"))
+
+    summary_headers, summary_rows, flagged_section = build_dashboard(
+        quarter_data, week_count
+    )
+
+    # Build combined sheet: summary section, blank row, flagged section
+    dashboard_rows: list[list[Any]] = []
+    dashboard_rows.append(summary_headers)
+    dashboard_rows.extend(summary_rows)
+    dashboard_rows.append([])  # blank separator row
+    dashboard_rows.extend(flagged_section)
+
+    # Write using the same sheets client method
+    sheets.write_quarterly_tracker(
+        DASHBOARD_TAB_NAME, dashboard_rows[0], dashboard_rows[1:]
+    )
+    print(
+        f"  Dashboard written with {len(summary_rows)} ASINs, "
+        f"{len(flagged_section) - 1} flagged keywords"
+    )
+
+
 def check_keyword_alerts(
     keyword: str,
     current_listing: ListingContent | None,
@@ -714,6 +1007,9 @@ def start_quarter(config: AppConfig) -> bool:
     print(f"\n  Writing to Google Sheets: {tab_name}")
     sheets.write_quarterly_tracker(tab_name, headers, all_rows)
 
+    # Generate dashboard
+    generate_dashboard(sheets, tab_name)
+
     # Print summary
     print(f"\n{'=' * 60}")
     print(f"Quarterly tracker initialized for Q{quarter} {year}")
@@ -943,6 +1239,9 @@ def update_week(config: AppConfig) -> bool:
     # Write updated data
     print(f"\n  Writing updated data to {tab_name}")
     sheets.write_quarterly_tracker(tab_name, new_headers, all_rows)
+
+    # Generate dashboard
+    generate_dashboard(sheets, tab_name)
 
     # Print summary
     print(f"\n{'=' * 60}")

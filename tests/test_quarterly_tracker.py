@@ -13,6 +13,12 @@ from sqp_analyzer.commands.quarterly_tracker import (
     start_quarter,
     update_week,
     _build_asin_keywords,
+    extract_week_metrics,
+    detect_drastic_changes,
+    build_asin_summary,
+    build_dashboard,
+    generate_dashboard,
+    DASHBOARD_TAB_NAME,
 )
 from sqp_analyzer.config import AppConfig, SheetsConfig, SPAPIConfig, Thresholds
 from sqp_analyzer.models import QuarterlyKeyword, SQPRecord, WeeklySnapshot
@@ -333,6 +339,10 @@ class TestStartQuarterConsolidated:
         # Mock sheets client
         mock_sheets = MagicMock()
         mock_sheets.get_active_asins.return_value = MOCK_ASINS
+        # generate_dashboard reads the Q tab after writing
+        mock_sheets.get_quarterly_tracker.return_value = _build_mock_consolidated_sheet(
+            ["W01", "W02"]
+        )
         mock_sheets_cls.return_value = mock_sheets
 
         # Mock SQP reports - return valid data for each ASIN/week combo
@@ -374,9 +384,11 @@ class TestStartQuarterConsolidated:
 
         assert result is True
 
-        # Verify write_quarterly_tracker was called with "Q1"
-        mock_sheets.write_quarterly_tracker.assert_called_once()
-        call_args = mock_sheets.write_quarterly_tracker.call_args
+        # Verify write_quarterly_tracker was called twice (Q tab + Dashboard)
+        assert mock_sheets.write_quarterly_tracker.call_count == 2
+
+        # First call: Q tab
+        call_args = mock_sheets.write_quarterly_tracker.call_args_list[0]
         tab_name = call_args[0][0]
         headers = call_args[0][1]
         rows = call_args[0][2]
@@ -394,6 +406,10 @@ class TestStartQuarterConsolidated:
         # Check all 3 ASINs present
         asins_in_rows = {r[0] for r in separator_rows}
         assert asins_in_rows == {"B0ASIN0001", "B0ASIN0002", "B0ASIN0003"}
+
+        # Second call: Dashboard tab
+        dashboard_call = mock_sheets.write_quarterly_tracker.call_args_list[1]
+        assert dashboard_call[0][0] == DASHBOARD_TAB_NAME
 
 
 class TestUpdateWeekConsolidated:
@@ -473,9 +489,11 @@ class TestUpdateWeekConsolidated:
 
         assert result is True
 
-        # Verify write was called
-        mock_sheets.write_quarterly_tracker.assert_called_once()
-        call_args = mock_sheets.write_quarterly_tracker.call_args
+        # Verify write was called twice (Q tab + Dashboard)
+        assert mock_sheets.write_quarterly_tracker.call_count == 2
+
+        # First call: Q tab
+        call_args = mock_sheets.write_quarterly_tracker.call_args_list[0]
         tab_name = call_args[0][0]
         headers = call_args[0][1]
         rows = call_args[0][2]
@@ -495,3 +513,423 @@ class TestUpdateWeekConsolidated:
         assert all(
             r[0] in {"B0ASIN0001", "B0ASIN0002", "B0ASIN0003"} for r in data_rows
         )
+
+        # Second call: Dashboard tab
+        dashboard_call = mock_sheets.write_quarterly_tracker.call_args_list[1]
+        assert dashboard_call[0][0] == DASHBOARD_TAB_NAME
+
+
+# --- Dashboard test helpers ---
+
+
+def _build_mock_sheet_with_changes(
+    week_labels: list[str],
+    volume_overrides: dict[str, dict[str, dict[str, int]]] | None = None,
+    rank_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
+    alert_overrides: dict[str, dict[str, str]] | None = None,
+) -> list[list]:
+    """Build a mock consolidated sheet with specific overrides for testing.
+
+    Args:
+        week_labels: List of week labels
+        volume_overrides: {asin: {keyword: {week_label: volume}}}
+        rank_overrides: {asin: {keyword: {week_label: rank_status}}}
+        alert_overrides: {asin: {keyword: alert_text}}
+
+    Returns:
+        Complete sheet as list of rows (including header)
+    """
+    sheet = _build_mock_consolidated_sheet(week_labels)
+    headers = sheet[0]
+
+    # Find week column indices
+    week_vol_indices = {}
+    week_rank_indices = {}
+    for i, h in enumerate(headers):
+        if h.endswith(" Vol"):
+            week = h.replace(" Vol", "")
+            week_vol_indices[week] = i
+        if h.endswith(" Rank"):
+            week = h.replace(" Rank", "")
+            week_rank_indices[week] = i
+
+    alert_idx = len(headers) - 1  # Alert is last column
+
+    current_asin = None
+    for row in sheet[1:]:
+        if is_asin_separator_row(row):
+            current_asin = row[0]
+            continue
+
+        keyword = row[2]
+
+        # Apply volume overrides
+        if volume_overrides and current_asin in volume_overrides:
+            kw_overrides = volume_overrides[current_asin].get(keyword, {})
+            for wl, vol in kw_overrides.items():
+                if wl in week_vol_indices:
+                    row[week_vol_indices[wl]] = vol
+
+        # Apply rank overrides
+        if rank_overrides and current_asin in rank_overrides:
+            kw_overrides = rank_overrides[current_asin].get(keyword, {})
+            for wl, rank in kw_overrides.items():
+                if wl in week_rank_indices:
+                    row[week_rank_indices[wl]] = rank
+
+        # Apply alert overrides
+        if alert_overrides and current_asin in alert_overrides:
+            alert_text = alert_overrides[current_asin].get(keyword)
+            if alert_text is not None:
+                while len(row) <= alert_idx:
+                    row.append("")
+                row[alert_idx] = alert_text
+
+    return sheet
+
+
+# --- Dashboard tests ---
+
+
+class TestExtractWeekMetrics:
+    def test_extracts_first_week(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        kw_row = parsed["B0ASIN0001"]["keywords"][0]["row_data"]
+
+        metrics = extract_week_metrics(kw_row, 0)
+        assert metrics is not None
+        assert metrics["volume"] == 5000
+        assert metrics["rank_status"] is not None
+
+    def test_extracts_second_week(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        kw_row = parsed["B0ASIN0001"]["keywords"][0]["row_data"]
+
+        metrics = extract_week_metrics(kw_row, 1)
+        assert metrics is not None
+        assert metrics["volume"] == 5000
+
+    def test_missing_data_returns_none(self):
+        short_row = ["ASIN", 1, "keyword", "YES", "NO"]
+        assert extract_week_metrics(short_row, 0) is None
+
+    def test_all_dashes_returns_none(self):
+        row = ["ASIN", 1, "keyword", "YES", "NO", "-", "-", "-", "-", "-", "-", ""]
+        assert extract_week_metrics(row, 0) is None
+
+    def test_string_conversion(self):
+        row = [
+            "ASIN",
+            1,
+            "keyword",
+            "YES",
+            "NO",
+            "5000",
+            "10.0",
+            "2.5",
+            "0.1",
+            "30.0",
+            "top_3",
+            "",
+        ]
+        metrics = extract_week_metrics(row, 0)
+        assert metrics is not None
+        assert metrics["volume"] == 5000.0
+        assert metrics["imp_share"] == 10.0
+
+    def test_out_of_bounds_week_returns_none(self):
+        row = [
+            "ASIN",
+            1,
+            "keyword",
+            "YES",
+            "NO",
+            "5000",
+            "10.0",
+            "2.5",
+            "0.1",
+            "30.0",
+            "top_3",
+            "",
+        ]
+        assert extract_week_metrics(row, 5) is None
+
+
+class TestDetectDrasticChanges:
+    def test_volume_drop_detected(self):
+        sheet = _build_mock_sheet_with_changes(
+            ["W01", "W02"],
+            volume_overrides={
+                "B0ASIN0001": {
+                    "garlic press": {"W01": 5000, "W02": 2500},
+                }
+            },
+        )
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 2)
+
+        kw_flags = [f for f in flagged if f["keyword"] == "garlic press"]
+        assert len(kw_flags) == 1
+        assert any("Volume" in r for r in kw_flags[0]["reasons"])
+
+    def test_volume_drop_not_detected_under_threshold(self):
+        sheet = _build_mock_sheet_with_changes(
+            ["W01", "W02"],
+            volume_overrides={
+                "B0ASIN0001": {
+                    "garlic press": {"W01": 5000, "W02": 4000},
+                }
+            },
+        )
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 2)
+
+        kw_flags = [f for f in flagged if f["keyword"] == "garlic press"]
+        volume_flags = [f for f in kw_flags if any("Volume" in r for r in f["reasons"])]
+        assert len(volume_flags) == 0
+
+    def test_rank_downgrade_detected(self):
+        sheet = _build_mock_sheet_with_changes(
+            ["W01", "W02"],
+            rank_overrides={
+                "B0ASIN0001": {
+                    "garlic press": {"W01": "page_1_high", "W02": "invisible"},
+                }
+            },
+        )
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 2)
+
+        kw_flags = [f for f in flagged if f["keyword"] == "garlic press"]
+        assert len(kw_flags) >= 1
+        assert any("Rank:" in r for r in kw_flags[0]["reasons"])
+
+    def test_rank_upgrade_not_flagged(self):
+        sheet = _build_mock_sheet_with_changes(
+            ["W01", "W02"],
+            rank_overrides={
+                "B0ASIN0001": {
+                    "garlic press": {"W01": "invisible", "W02": "top_3"},
+                }
+            },
+        )
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 2)
+
+        kw_flags = [f for f in flagged if f["keyword"] == "garlic press"]
+        rank_flags = [f for f in kw_flags if any("Rank:" in r for r in f["reasons"])]
+        assert len(rank_flags) == 0
+
+    def test_placement_drop_detected(self):
+        sheet = _build_mock_sheet_with_changes(
+            ["W01", "W02"],
+            alert_overrides={
+                "B0ASIN0001": {
+                    "garlic press": "DROPPED FROM TITLE",
+                }
+            },
+        )
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 2)
+
+        kw_flags = [f for f in flagged if f["keyword"] == "garlic press"]
+        assert len(kw_flags) >= 1
+        assert any("DROPPED FROM TITLE" in r for r in kw_flags[0]["reasons"])
+
+    def test_multiple_reasons(self):
+        sheet = _build_mock_sheet_with_changes(
+            ["W01", "W02"],
+            volume_overrides={
+                "B0ASIN0001": {"garlic press": {"W01": 5000, "W02": 2000}},
+            },
+            rank_overrides={
+                "B0ASIN0001": {"garlic press": {"W01": "top_3", "W02": "invisible"}},
+            },
+        )
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 2)
+
+        kw_flags = [f for f in flagged if f["keyword"] == "garlic press"]
+        assert len(kw_flags) == 1
+        assert len(kw_flags[0]["reasons"]) >= 2
+
+    def test_single_week_no_wow_comparison(self):
+        sheet = _build_mock_consolidated_sheet(["W01"])
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 1)
+
+        for f in flagged:
+            for r in f["reasons"]:
+                assert "Volume" not in r
+                assert "Rank:" not in r
+
+    def test_stable_data_no_flags(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 2)
+        assert len(flagged) == 0
+
+
+class TestBuildAsinSummary:
+    def test_rank_status_counts(self):
+        sheet = _build_mock_consolidated_sheet(["W01"])
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = detect_drastic_changes("B0ASIN0001", parsed["B0ASIN0001"], 1)
+        row = build_asin_summary("B0ASIN0001", parsed["B0ASIN0001"], 1, flagged)
+
+        assert row[0] == "B0ASIN0001"
+        assert row[1] == "Garlic Press"
+        total = row[2] + row[3] + row[4] + row[5]
+        assert total == 10
+
+    def test_health_strong(self):
+        sheet = _build_mock_consolidated_sheet(["W01"])
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = []
+        row = build_asin_summary("B0ASIN0001", parsed["B0ASIN0001"], 1, flagged)
+        assert row[7] in ("STRONG", "OK")
+
+    def test_health_at_risk(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = [
+            {
+                "keyword": "garlic press",
+                "rank": 1,
+                "reasons": ["Volume -50%"],
+                "curr_vol": 2500,
+                "curr_rank": "top_3",
+                "prev_vol": 5000,
+                "prev_rank": "top_3",
+            }
+        ]
+        row = build_asin_summary("B0ASIN0001", parsed["B0ASIN0001"], 2, flagged)
+        assert row[7] == "AT RISK"
+
+    def test_health_weak(self):
+        rank_overrides = {
+            "B0ASIN0001": {
+                kw: {"W01": "invisible"} for kw, _ in KEYWORDS_BY_ASIN["B0ASIN0001"]
+            }
+        }
+        sheet = _build_mock_sheet_with_changes(["W01"], rank_overrides=rank_overrides)
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = []
+        row = build_asin_summary("B0ASIN0001", parsed["B0ASIN0001"], 1, flagged)
+        assert row[7] == "WEAK"
+
+    def test_top_alert_populated(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        flagged = [
+            {
+                "keyword": "garlic press",
+                "rank": 1,
+                "reasons": ["Volume -50% (5000 -> 2500)"],
+                "curr_vol": 2500,
+                "curr_rank": "top_3",
+                "prev_vol": 5000,
+                "prev_rank": "top_3",
+            }
+        ]
+        row = build_asin_summary("B0ASIN0001", parsed["B0ASIN0001"], 2, flagged)
+        assert row[6] == "Volume -50% (5000 -> 2500)"
+
+
+class TestBuildDashboard:
+    def test_both_sections_present(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        summary_headers, summary_rows, flagged_section = build_dashboard(parsed, 2)
+
+        assert len(summary_headers) == 8
+        assert len(summary_rows) == 3
+        assert len(flagged_section) >= 1
+        assert flagged_section[0][0] == "ASIN"
+
+    def test_summary_row_count(self):
+        sheet = _build_mock_consolidated_sheet(["W01"])
+        parsed = parse_consolidated_sheet(sheet)
+        _, summary_rows, _ = build_dashboard(parsed, 1)
+        assert len(summary_rows) == 3
+
+    def test_flagged_section_with_changes(self):
+        sheet = _build_mock_sheet_with_changes(
+            ["W01", "W02"],
+            volume_overrides={
+                "B0ASIN0001": {"garlic press": {"W01": 5000, "W02": 2000}},
+            },
+        )
+        parsed = parse_consolidated_sheet(sheet)
+        _, _, flagged_section = build_dashboard(parsed, 2)
+        assert len(flagged_section) >= 2
+
+    def test_flagged_section_empty_when_stable(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        _, _, flagged_section = build_dashboard(parsed, 2)
+        assert len(flagged_section) == 1  # Only header
+
+    def test_row_width_consistency(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        parsed = parse_consolidated_sheet(sheet)
+        summary_headers, summary_rows, flagged_section = build_dashboard(parsed, 2)
+
+        for row in summary_rows:
+            assert len(row) == len(summary_headers)
+
+        flagged_headers = flagged_section[0]
+        for row in flagged_section[1:]:
+            assert len(row) == len(flagged_headers)
+
+
+class TestGenerateDashboard:
+    def test_reads_q_tab_and_writes_dashboard(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        mock_sheets = MagicMock()
+        mock_sheets.get_quarterly_tracker.return_value = sheet
+
+        generate_dashboard(mock_sheets, "Q1")
+
+        mock_sheets.get_quarterly_tracker.assert_called_once_with("Q1")
+        mock_sheets.write_quarterly_tracker.assert_called_once()
+        call_args = mock_sheets.write_quarterly_tracker.call_args
+        assert call_args[0][0] == DASHBOARD_TAB_NAME
+
+    def test_skips_on_empty_data(self):
+        mock_sheets = MagicMock()
+        mock_sheets.get_quarterly_tracker.return_value = None
+
+        generate_dashboard(mock_sheets, "Q1")
+        mock_sheets.write_quarterly_tracker.assert_not_called()
+
+    def test_skips_on_header_only(self):
+        mock_sheets = MagicMock()
+        mock_sheets.get_quarterly_tracker.return_value = [
+            ["ASIN", "Rank", "Keyword", "In Title", "In Backend", "Alert"]
+        ]
+
+        generate_dashboard(mock_sheets, "Q1")
+        mock_sheets.write_quarterly_tracker.assert_not_called()
+
+    def test_dashboard_contains_all_asins(self):
+        sheet = _build_mock_consolidated_sheet(["W01", "W02"])
+        mock_sheets = MagicMock()
+        mock_sheets.get_quarterly_tracker.return_value = sheet
+
+        generate_dashboard(mock_sheets, "Q1")
+
+        call_args = mock_sheets.write_quarterly_tracker.call_args
+        # write_quarterly_tracker(tab_name, headers, rows)
+        rows = call_args[0][2]
+
+        summary_asins = set()
+        for row in rows:
+            if not row:
+                break
+            if row[0] and str(row[0]).startswith("B0"):
+                summary_asins.add(row[0])
+
+        assert summary_asins == {"B0ASIN0001", "B0ASIN0002", "B0ASIN0003"}
