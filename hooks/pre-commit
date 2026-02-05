@@ -1,0 +1,21 @@
+#!/bin/bash
+# Pre-commit hook: Run ruff linting and formatting
+
+echo "Running ruff check..."
+ruff check --fix .
+if [ $? -ne 0 ]; then
+    echo "ruff check failed. Please fix the issues before committing."
+    exit 1
+fi
+
+echo "Running ruff format..."
+ruff format .
+if [ $? -ne 0 ]; then
+    echo "ruff format failed."
+    exit 1
+fi
+
+# Re-add any files that were modified by ruff
+git add -u
+
+echo "Linting passed!"

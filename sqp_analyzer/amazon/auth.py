@@ -15,6 +15,7 @@ LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 @dataclass
 class AccessToken:
     """LWA access token with expiry tracking."""
+
     token: str
     expires_at: float
 

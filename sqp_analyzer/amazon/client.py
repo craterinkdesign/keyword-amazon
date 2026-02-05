@@ -187,7 +187,9 @@ class BrandAnalyticsClient:
 
         # Parse search query data
         # The actual response structure may vary - this handles common formats
-        queries_data = data.get("searchQueries", data.get("payload", {}).get("searchQueries", []))
+        queries_data = data.get(
+            "searchQueries", data.get("payload", {}).get("searchQueries", [])
+        )
 
         for query_data in queries_data:
             metrics = SearchQueryMetrics(

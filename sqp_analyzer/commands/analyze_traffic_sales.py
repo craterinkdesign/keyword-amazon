@@ -9,7 +9,6 @@ import argparse
 import gzip
 import json
 import sys
-from datetime import date
 
 import requests
 from sp_api.api import Reports
@@ -110,18 +109,20 @@ def write_to_sheets(config, report_data: dict) -> None:
 
             ordered_sales = sales.get("orderedProductSales", {})
 
-            rows.append([
-                dt,
-                sales.get("unitsOrdered", 0),
-                ordered_sales.get("amount", 0),
-                sales.get("unitsShipped", 0),
-                sales.get("ordersShipped", 0),
-                traffic.get("sessions", 0),
-                traffic.get("pageViews", 0),
-                traffic.get("buyBoxPercentage", 0),
-                traffic.get("unitSessionPercentage", 0),
-                traffic.get("orderItemSessionPercentage", 0),
-            ])
+            rows.append(
+                [
+                    dt,
+                    sales.get("unitsOrdered", 0),
+                    ordered_sales.get("amount", 0),
+                    sales.get("unitsShipped", 0),
+                    sales.get("ordersShipped", 0),
+                    traffic.get("sessions", 0),
+                    traffic.get("pageViews", 0),
+                    traffic.get("buyBoxPercentage", 0),
+                    traffic.get("unitSessionPercentage", 0),
+                    traffic.get("orderItemSessionPercentage", 0),
+                ]
+            )
 
         ws.update("A1", rows)
         print(f"  Wrote {len(sales_by_date)} rows to Traffic-ByDate")
@@ -161,18 +162,20 @@ def write_to_sheets(config, report_data: dict) -> None:
 
             ordered_sales = sales.get("orderedProductSales", {})
 
-            rows.append([
-                child_asin or parent_asin,
-                parent_asin,
-                sku,
-                sales.get("unitsOrdered", 0),
-                ordered_sales.get("amount", 0),
-                sales.get("unitsShipped", 0),
-                traffic.get("sessions", 0),
-                traffic.get("pageViews", 0),
-                traffic.get("buyBoxPercentage", 0),
-                traffic.get("unitSessionPercentage", 0),
-            ])
+            rows.append(
+                [
+                    child_asin or parent_asin,
+                    parent_asin,
+                    sku,
+                    sales.get("unitsOrdered", 0),
+                    ordered_sales.get("amount", 0),
+                    sales.get("unitsShipped", 0),
+                    traffic.get("sessions", 0),
+                    traffic.get("pageViews", 0),
+                    traffic.get("buyBoxPercentage", 0),
+                    traffic.get("unitSessionPercentage", 0),
+                ]
+            )
 
         ws.update("A1", rows)
         print(f"  Wrote {len(sales_by_asin)} rows to Traffic-ByASIN")
@@ -197,13 +200,17 @@ def main() -> int:
         return 1
 
     spec = report_data.get("reportSpecification", {})
-    print(f"Period: {spec.get('dataStartTime', '')[:10]} to {spec.get('dataEndTime', '')[:10]}")
+    print(
+        f"Period: {spec.get('dataStartTime', '')[:10]} to {spec.get('dataEndTime', '')[:10]}"
+    )
 
     print("\nWriting to Google Sheets...")
     write_to_sheets(config, report_data)
 
-    print(f"\n[SUCCESS] Data written to Google Sheets")
-    print(f"View: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}")
+    print("\n[SUCCESS] Data written to Google Sheets")
+    print(
+        f"View: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}"
+    )
 
     return 0
 

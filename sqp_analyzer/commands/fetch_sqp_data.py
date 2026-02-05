@@ -109,7 +109,7 @@ def test_connection(credentials: dict) -> bool:
     print("Testing SP-API connection...")
     try:
         report = Reports(credentials=credentials, marketplace=Marketplaces.US)
-        res = report.get_reports(
+        _res = report.get_reports(
             reportTypes=["GET_MERCHANT_LISTINGS_ALL_DATA"],
             pageSize=1,
         )
@@ -165,7 +165,7 @@ def request_report(
     """Request a new SQP report."""
     report = Reports(credentials=credentials, marketplace=Marketplaces.US)
 
-    print(f"Requesting SQP report...")
+    print("Requesting SQP report...")
     print(f"  ASIN: {asin}")
     print(f"  Period: {start_date} to {end_date}")
 
@@ -183,7 +183,9 @@ def request_report(
     report_id = res.payload.get("reportId")
     print(f"\n[SUBMITTED] Report ID: {report_id}")
     print("\nNote: Brand Analytics reports typically take 30-60 minutes to process.")
-    print(f"Check status with: python -m sqp_analyzer.commands.fetch_sqp_data --check {report_id}")
+    print(
+        f"Check status with: python -m sqp_analyzer.commands.fetch_sqp_data --check {report_id}"
+    )
 
     return report_id
 
@@ -240,7 +242,9 @@ def download_and_display(report: Reports, doc_id: str) -> None:
 
     print("\n" + "=" * 80)
     print(f"SQP Report for ASIN: {options.get('asin', 'N/A')}")
-    print(f"Period: {spec.get('dataStartTime', '')[:10]} to {spec.get('dataEndTime', '')[:10]}")
+    print(
+        f"Period: {spec.get('dataStartTime', '')[:10]} to {spec.get('dataEndTime', '')[:10]}"
+    )
     print("=" * 80)
 
     # Group by ASIN
@@ -278,7 +282,9 @@ def download_and_display(report: Reports, doc_id: str) -> None:
             pur = entry.get("purchaseData", {})
             pur_share = pur.get("asinPurchaseShare", 0) or 0
 
-            print(f"{query:<45} {volume:>6} {imp_share:>5.1f}% {clk_share:>5.1f}% {pur_share:>5.1f}%")
+            print(
+                f"{query:<45} {volume:>6} {imp_share:>5.1f}% {clk_share:>5.1f}% {pur_share:>5.1f}%"
+            )
 
     print("\n" + "=" * 80)
     print(f"Total: {len(report_data.get('dataByAsin', []))} search queries")
@@ -301,7 +307,7 @@ def wait_for_report(credentials: dict, report_id: str, max_wait: int = 3600) -> 
         doc_id = res.payload.get("reportDocumentId")
 
         elapsed = int(time.time() - start_time)
-        print(f"  [{elapsed//60}m {elapsed%60}s] Status: {status}")
+        print(f"  [{elapsed // 60}m {elapsed % 60}s] Status: {status}")
 
         if status == "DONE" and doc_id:
             print("\n[SUCCESS] Report ready!")
@@ -310,7 +316,9 @@ def wait_for_report(credentials: dict, report_id: str, max_wait: int = 3600) -> 
         elif status == "FATAL":
             print("\n[FAILED] Report failed")
             if doc_id:
-                doc_res = report.get_report_document(reportDocumentId=doc_id, download=False)
+                doc_res = report.get_report_document(
+                    reportDocumentId=doc_id, download=False
+                )
                 url = doc_res.payload.get("url")
                 response = requests.get(url)
                 data = gzip.decompress(response.content).decode("utf-8")
@@ -323,7 +331,7 @@ def wait_for_report(credentials: dict, report_id: str, max_wait: int = 3600) -> 
 
         time.sleep(check_interval)
 
-    print(f"\n[TIMEOUT] Report did not complete within {max_wait//60} minutes")
+    print(f"\n[TIMEOUT] Report did not complete within {max_wait // 60} minutes")
     return False
 
 
@@ -364,7 +372,9 @@ def main() -> int:
 
         # Validate start date is Sunday
         if start_date.weekday() != 6:  # 6 = Sunday
-            print(f"[ERROR] Start date must be a Sunday (got {start_date.strftime('%A')})")
+            print(
+                f"[ERROR] Start date must be a Sunday (got {start_date.strftime('%A')})"
+            )
             return 1
 
         report_id = request_report(credentials, args.asin.upper(), start_date, end_date)

@@ -8,6 +8,7 @@ from typing import Any
 @dataclass
 class SearchQueryMetrics:
     """Metrics for a single search query."""
+
     search_query: str
     search_volume: int = 0
     search_score: float = 0.0
@@ -53,13 +54,16 @@ class SearchQueryMetrics:
             "asin_price": self.asin_price,
             "market_price": self.market_price,
             "asin": self.asin,
-            "reporting_date": self.reporting_date.isoformat() if self.reporting_date else None,
+            "reporting_date": self.reporting_date.isoformat()
+            if self.reporting_date
+            else None,
         }
 
 
 @dataclass
 class SQPReport:
     """Search Query Performance report for a date range."""
+
     asin: str
     start_date: date
     end_date: date
@@ -80,6 +84,7 @@ class SQPReport:
 @dataclass
 class APIResponse:
     """Generic SP-API response wrapper."""
+
     success: bool
     data: Any | None = None
     error_code: str | None = None

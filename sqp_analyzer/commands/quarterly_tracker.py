@@ -21,7 +21,6 @@ import json
 import sys
 import time
 from datetime import date, timedelta
-from typing import Any
 
 import requests
 from sp_api.api import Reports
@@ -160,7 +159,9 @@ def get_quarter_weeks() -> list[tuple[int, date, date]]:
     return weeks
 
 
-def fetch_sqp_report(credentials: dict, asin: str, start_date: date, end_date: date) -> dict | None:
+def fetch_sqp_report(
+    credentials: dict, asin: str, start_date: date, end_date: date
+) -> dict | None:
     """Request and wait for SQP report.
 
     Args:
@@ -205,7 +206,9 @@ def fetch_sqp_report(credentials: dict, asin: str, start_date: date, end_date: d
 
         if status == "DONE" and doc_id:
             # Download report
-            doc_res = report.get_report_document(reportDocumentId=doc_id, download=False)
+            doc_res = report.get_report_document(
+                reportDocumentId=doc_id, download=False
+            )
             url = doc_res.payload.get("url")
 
             response = requests.get(url)
@@ -218,7 +221,9 @@ def fetch_sqp_report(credentials: dict, asin: str, start_date: date, end_date: d
 
         elif status == "FATAL":
             if doc_id:
-                doc_res = report.get_report_document(reportDocumentId=doc_id, download=False)
+                doc_res = report.get_report_document(
+                    reportDocumentId=doc_id, download=False
+                )
                 url = doc_res.payload.get("url")
                 response = requests.get(url)
                 data = gzip.decompress(response.content).decode("utf-8")
@@ -231,10 +236,10 @@ def fetch_sqp_report(credentials: dict, asin: str, start_date: date, end_date: d
             return None
 
         elapsed = int(time.time() - start_time)
-        print(f"  [{elapsed//60}m {elapsed%60}s] Status: {status}")
+        print(f"  [{elapsed // 60}m {elapsed % 60}s] Status: {status}")
         time.sleep(check_interval)
 
-    print(f"  [TIMEOUT] Report did not complete within {max_wait//60} minutes")
+    print(f"  [TIMEOUT] Report did not complete within {max_wait // 60} minutes")
     return None
 
 
@@ -307,19 +312,25 @@ def get_rank_status(imp_share: float, thresholds: Thresholds) -> RankStatus:
 def get_diagnostic_type(record: SQPRecord, thresholds: Thresholds) -> DiagnosticType:
     """Determine diagnostic type for a keyword."""
     # Ghost: High volume, no impressions
-    if (record.search_volume >= thresholds.ghost_min_volume and
-        record.impressions_share < thresholds.ghost_max_imp_share):
+    if (
+        record.search_volume >= thresholds.ghost_min_volume
+        and record.impressions_share < thresholds.ghost_max_imp_share
+    ):
         return DiagnosticType.GHOST
 
     # Window Shopper: Seen but not clicked
-    if (record.impressions_share >= thresholds.window_shopper_min_imp_share and
-        record.clicks_share < thresholds.window_shopper_max_click_share):
+    if (
+        record.impressions_share >= thresholds.window_shopper_min_imp_share
+        and record.clicks_share < thresholds.window_shopper_max_click_share
+    ):
         return DiagnosticType.WINDOW_SHOPPER
 
     # Price Problem: Clicked but not bought
-    if (record.impressions_share >= thresholds.price_problem_min_imp_share and
-        record.clicks_share > 0 and
-        record.purchases_share == 0):
+    if (
+        record.impressions_share >= thresholds.price_problem_min_imp_share
+        and record.clicks_share > 0
+        and record.purchases_share == 0
+    ):
         return DiagnosticType.PRICE_PROBLEM
 
     return DiagnosticType.HEALTHY
@@ -350,7 +361,9 @@ def calculate_opportunity_score(record: SQPRecord, diagnostic: DiagnosticType) -
     return max(0, min(100, round(score, 1)))
 
 
-def get_top_keywords(snapshot: WeeklySnapshot, count: int = TOP_KEYWORDS_COUNT) -> list[SQPRecord]:
+def get_top_keywords(
+    snapshot: WeeklySnapshot, count: int = TOP_KEYWORDS_COUNT
+) -> list[SQPRecord]:
     """Get top keywords by volume that have purchases.
 
     Args:
@@ -381,14 +394,16 @@ def build_headers(weeks: list[str]) -> list[str]:
     headers = ["Rank", "Keyword", "In Title", "In Backend"]
 
     for week in weeks:
-        headers.extend([
-            f"{week} Vol",
-            f"{week} Imp%",
-            f"{week} Clk%",
-            f"{week} Pur%",
-            f"{week} Opp",
-            f"{week} Rank",
-        ])
+        headers.extend(
+            [
+                f"{week} Vol",
+                f"{week} Imp%",
+                f"{week} Clk%",
+                f"{week} Pur%",
+                f"{week} Opp",
+                f"{week} Rank",
+            ]
+        )
 
     headers.append("Alert")
     return headers
@@ -451,11 +466,13 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     week_labels = [f"W{w[0]:02d}" for w in quarter_weeks]
     current_week_label = week_labels[-1]
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Starting Q{quarter} {year} tracker for ASIN: {asin}")
     print(f"Tab name: {tab_name}")
-    print(f"Fetching weeks: {week_labels[0]} through {current_week_label} ({len(quarter_weeks)} weeks)")
-    print('='*60)
+    print(
+        f"Fetching weeks: {week_labels[0]} through {current_week_label} ({len(quarter_weeks)} weeks)"
+    )
+    print("=" * 60)
 
     # Fetch SQP data for all weeks
     weekly_snapshots: dict[str, WeeklySnapshot] = {}
@@ -480,7 +497,11 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
         return False
 
     # Use most recent week to determine top keywords
-    latest_snapshot = weekly_snapshots[current_week_label] if current_week_label in weekly_snapshots else list(weekly_snapshots.values())[-1]
+    latest_snapshot = (
+        weekly_snapshots[current_week_label]
+        if current_week_label in weekly_snapshots
+        else list(weekly_snapshots.values())[-1]
+    )
 
     # Get top 10 keywords
     top_keywords = get_top_keywords(latest_snapshot)
@@ -488,7 +509,9 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
         print("[ERROR] No keywords with purchase data found")
         return False
 
-    print(f"\n  Selected top {len(top_keywords)} keywords by volume from {current_week_label}")
+    print(
+        f"\n  Selected top {len(top_keywords)} keywords by volume from {current_week_label}"
+    )
 
     # Fetch listing content if SKU provided
     listing = None
@@ -528,7 +551,9 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
                 if record:
                     diagnostic = get_diagnostic_type(record, config.thresholds)
                     opp_score = calculate_opportunity_score(record, diagnostic)
-                    rank_status = get_rank_status(record.impressions_share, config.thresholds)
+                    rank_status = get_rank_status(
+                        record.impressions_share, config.thresholds
+                    )
 
                     weekly_metrics[week_label] = {
                         "volume": record.search_volume,
@@ -579,19 +604,23 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     sheets.write_quarterly_tracker(tab_name, headers, rows)
 
     # Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Quarterly tracker initialized for Q{quarter} {year}")
     print(f"Weeks included: {week_labels[0]} - {current_week_label}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"\n{'Rank':<4} {'Keyword':<35} {'Title':>6} {'Back':>6} {'Vol':>6}")
     print("-" * 65)
     for qk in quarterly_keywords:
         title_mark = "YES" if qk.in_title else "NO"
         backend_mark = "YES" if qk.in_backend else "NO"
         vol = qk.weekly_metrics.get(current_week_label, {}).get("volume", 0)
-        print(f"{qk.rank:<4} {qk.keyword[:33]:<35} {title_mark:>6} {backend_mark:>6} {vol:>6}")
+        print(
+            f"{qk.rank:<4} {qk.keyword[:33]:<35} {title_mark:>6} {backend_mark:>6} {vol:>6}"
+        )
 
-    print(f"\nView results: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}")
+    print(
+        f"\nView results: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}"
+    )
     return True
 
 
@@ -612,11 +641,11 @@ def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     week_num = get_week_in_quarter()
     week_label = f"W{week_num:02d}"
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Updating Q{quarter} {year} tracker for ASIN: {asin}")
     print(f"Tab name: {tab_name}")
     print(f"Week: {week_label}")
-    print('='*60)
+    print("=" * 60)
 
     # Read existing tracker data
     sheets = SheetsClient(config.sheets)
@@ -638,12 +667,14 @@ def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     existing_keywords = []
     for row in data_rows:
         if len(row) >= 4:
-            existing_keywords.append({
-                "rank": row[0],
-                "keyword": row[1],
-                "prev_in_title": row[2] == "YES",
-                "prev_in_backend": row[3] == "YES",
-            })
+            existing_keywords.append(
+                {
+                    "rank": row[0],
+                    "keyword": row[1],
+                    "prev_in_title": row[2] == "YES",
+                    "prev_in_backend": row[3] == "YES",
+                }
+            )
 
     if not existing_keywords:
         print("[ERROR] No keywords found in tracker")
@@ -727,16 +758,20 @@ def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
                 # Current week - use fresh data
                 diagnostic = get_diagnostic_type(record, config.thresholds)
                 opp_score = calculate_opportunity_score(record, diagnostic)
-                rank_status = get_rank_status(record.impressions_share, config.thresholds)
+                rank_status = get_rank_status(
+                    record.impressions_share, config.thresholds
+                )
 
-                row.extend([
-                    record.search_volume,
-                    round(record.impressions_share, 1),
-                    round(record.clicks_share, 1),
-                    round(record.purchases_share, 1),
-                    opp_score,
-                    rank_status.value,
-                ])
+                row.extend(
+                    [
+                        record.search_volume,
+                        round(record.impressions_share, 1),
+                        round(record.clicks_share, 1),
+                        round(record.purchases_share, 1),
+                        opp_score,
+                        rank_status.value,
+                    ]
+                )
             elif week == week_label:
                 # Current week but no data for this keyword
                 row.extend(["-", "-", "-", "-", "-", "invisible"])
@@ -757,8 +792,12 @@ def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
                             row_idx = i
                             break
 
-                    if row_idx is not None and week_start_idx + 6 <= len(data_rows[row_idx]):
-                        row.extend(data_rows[row_idx][week_start_idx:week_start_idx + 6])
+                    if row_idx is not None and week_start_idx + 6 <= len(
+                        data_rows[row_idx]
+                    ):
+                        row.extend(
+                            data_rows[row_idx][week_start_idx : week_start_idx + 6]
+                        )
                     else:
                         row.extend(["", "", "", "", "", ""])
                 else:
@@ -778,16 +817,18 @@ def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     sheets.write_quarterly_tracker(tab_name, new_headers, new_rows)
 
     # Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Updated {tab_name} with {week_label} data")
-    print('='*60)
+    print("=" * 60)
 
     if alerts_found:
         print(f"\n[ALERTS] {len(alerts_found)} placement changes detected:")
         for keyword, alert in alerts_found:
             print(f"  - {keyword}: {alert}")
 
-    print(f"\nView results: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}")
+    print(
+        f"\nView results: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}"
+    )
     return True
 
 
@@ -800,9 +841,9 @@ def update_all(config: AppConfig) -> bool:
     Returns:
         True if all updates successful
     """
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Updating all active ASINs")
-    print('='*60)
+    print("=" * 60)
 
     sheets = SheetsClient(config.sheets)
     asins = sheets.get_active_asins()
@@ -837,9 +878,9 @@ def update_all(config: AppConfig) -> bool:
             print(f"\n[ERROR] Failed to update {asin}: {e}")
             continue
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Completed: {success_count}/{len(asins)} ASINs updated")
-    print('='*60)
+    print("=" * 60)
 
     return success_count == len(asins)
 

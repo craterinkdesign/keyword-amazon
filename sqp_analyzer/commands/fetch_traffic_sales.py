@@ -150,7 +150,9 @@ def list_reports(credentials: dict) -> None:
         date_gran = options.get("dateGranularity", "N/A")
 
         status_icon = "✓" if status == "DONE" else "✗" if status == "FATAL" else "⏳"
-        print(f"{status_icon} {rid} | {status:<12} | {asin_gran}/{date_gran} | {created}")
+        print(
+            f"{status_icon} {rid} | {status:<12} | {asin_gran}/{date_gran} | {created}"
+        )
 
 
 def request_report(
@@ -163,7 +165,7 @@ def request_report(
     """Request a new Sales and Traffic report."""
     report = Reports(credentials=credentials, marketplace=Marketplaces.US)
 
-    print(f"Requesting Sales and Traffic report...")
+    print("Requesting Sales and Traffic report...")
     print(f"  Period: {start_date} to {end_date}")
     print(f"  Date Granularity: {date_granularity}")
     print(f"  ASIN Granularity: {asin_granularity}")
@@ -182,7 +184,9 @@ def request_report(
     report_id = res.payload.get("reportId")
     print(f"\n[SUBMITTED] Report ID: {report_id}")
     print("\nNote: Reports typically take 5-15 minutes to process.")
-    print(f"Check status with: python -m sqp_analyzer.commands.fetch_traffic_sales --check {report_id}")
+    print(
+        f"Check status with: python -m sqp_analyzer.commands.fetch_traffic_sales --check {report_id}"
+    )
 
     return report_id
 
@@ -238,16 +242,22 @@ def download_and_display(report: Reports, doc_id: str) -> None:
     options = spec.get("reportOptions", {})
 
     print("\n" + "=" * 100)
-    print(f"Sales and Traffic Report")
-    print(f"Period: {spec.get('dataStartTime', '')[:10]} to {spec.get('dataEndTime', '')[:10]}")
-    print(f"Granularity: {options.get('dateGranularity', 'N/A')} / {options.get('asinGranularity', 'N/A')}")
+    print("Sales and Traffic Report")
+    print(
+        f"Period: {spec.get('dataStartTime', '')[:10]} to {spec.get('dataEndTime', '')[:10]}"
+    )
+    print(
+        f"Granularity: {options.get('dateGranularity', 'N/A')} / {options.get('asinGranularity', 'N/A')}"
+    )
     print("=" * 100)
 
     # Sales by date
     sales_by_date = report_data.get("salesAndTrafficByDate", [])
     if sales_by_date:
         print(f"\n--- Sales by Date ({len(sales_by_date)} days) ---")
-        print(f"{'Date':<12} {'Units':>8} {'Sales':>12} {'Sessions':>10} {'PageViews':>10} {'BuyBox%':>8}")
+        print(
+            f"{'Date':<12} {'Units':>8} {'Sales':>12} {'Sessions':>10} {'PageViews':>10} {'BuyBox%':>8}"
+        )
         print("-" * 70)
 
         for entry in sales_by_date[:14]:  # Show first 2 weeks
@@ -262,13 +272,17 @@ def download_and_display(report: Reports, doc_id: str) -> None:
             page_views = traffic.get("pageViews", 0)
             buy_box = traffic.get("buyBoxPercentage", 0)
 
-            print(f"{dt:<12} {units:>8} ${sales_amt:>10.2f} {sessions:>10} {page_views:>10} {buy_box:>7.1f}%")
+            print(
+                f"{dt:<12} {units:>8} ${sales_amt:>10.2f} {sessions:>10} {page_views:>10} {buy_box:>7.1f}%"
+            )
 
     # Sales by ASIN
     sales_by_asin = report_data.get("salesAndTrafficByAsin", [])
     if sales_by_asin:
         print(f"\n--- Sales by ASIN ({len(sales_by_asin)} products) ---")
-        print(f"{'ASIN':<12} {'SKU':<20} {'Units':>8} {'Sales':>12} {'Sessions':>10} {'BuyBox%':>8}")
+        print(
+            f"{'ASIN':<12} {'SKU':<20} {'Units':>8} {'Sales':>12} {'Sessions':>10} {'BuyBox%':>8}"
+        )
         print("-" * 80)
 
         # Sort by units ordered
@@ -289,10 +303,14 @@ def download_and_display(report: Reports, doc_id: str) -> None:
             sessions = traffic.get("sessions", 0)
             buy_box = traffic.get("buyBoxPercentage", 0)
 
-            print(f"{asin:<12} {sku:<20} {units:>8} ${sales_amt:>10.2f} {sessions:>10} {buy_box:>7.1f}%")
+            print(
+                f"{asin:<12} {sku:<20} {units:>8} ${sales_amt:>10.2f} {sessions:>10} {buy_box:>7.1f}%"
+            )
 
     print("\n" + "=" * 100)
-    print(f"Total: {len(sales_by_date)} date entries, {len(sales_by_asin)} ASIN entries")
+    print(
+        f"Total: {len(sales_by_date)} date entries, {len(sales_by_asin)} ASIN entries"
+    )
     print("=" * 100)
 
 
@@ -312,7 +330,7 @@ def wait_for_report(credentials: dict, report_id: str, max_wait: int = 1800) -> 
         doc_id = res.payload.get("reportDocumentId")
 
         elapsed = int(time.time() - start_time)
-        print(f"  [{elapsed//60}m {elapsed%60}s] Status: {status}")
+        print(f"  [{elapsed // 60}m {elapsed % 60}s] Status: {status}")
 
         if status == "DONE" and doc_id:
             print("\n[SUCCESS] Report ready!")
@@ -321,7 +339,9 @@ def wait_for_report(credentials: dict, report_id: str, max_wait: int = 1800) -> 
         elif status == "FATAL":
             print("\n[FAILED] Report failed")
             if doc_id:
-                doc_res = report.get_report_document(reportDocumentId=doc_id, download=False)
+                doc_res = report.get_report_document(
+                    reportDocumentId=doc_id, download=False
+                )
                 url = doc_res.payload.get("url")
                 response = requests.get(url)
                 data = gzip.decompress(response.content).decode("utf-8")
@@ -334,7 +354,7 @@ def wait_for_report(credentials: dict, report_id: str, max_wait: int = 1800) -> 
 
         time.sleep(check_interval)
 
-    print(f"\n[TIMEOUT] Report did not complete within {max_wait//60} minutes")
+    print(f"\n[TIMEOUT] Report did not complete within {max_wait // 60} minutes")
     return False
 
 

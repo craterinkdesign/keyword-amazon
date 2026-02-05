@@ -8,23 +8,26 @@ from typing import Any
 
 class RankStatus(Enum):
     """Estimated page position based on impression share."""
-    TOP_3 = "top_3"           # >20% imp share
+
+    TOP_3 = "top_3"  # >20% imp share
     PAGE_1_HIGH = "page_1_high"  # 10-20%
-    PAGE_1_LOW = "page_1_low"    # 1-10%
-    INVISIBLE = "invisible"       # <1%
+    PAGE_1_LOW = "page_1_low"  # 1-10%
+    INVISIBLE = "invisible"  # <1%
 
 
 class DiagnosticType(Enum):
     """Keyword diagnostic types for opportunity score calculation."""
-    GHOST = "ghost"              # High volume, no impressions
+
+    GHOST = "ghost"  # High volume, no impressions
     WINDOW_SHOPPER = "window_shopper"  # Seen but not clicked
-    PRICE_PROBLEM = "price_problem"    # Clicked but not bought
+    PRICE_PROBLEM = "price_problem"  # Clicked but not bought
     HEALTHY = "healthy"
 
 
 @dataclass
 class SQPRecord:
     """Single SQP data record for a search query."""
+
     search_query: str
     asin: str
     week_date: date
@@ -77,6 +80,7 @@ class SQPRecord:
 @dataclass
 class WeeklySnapshot:
     """Weekly snapshot of all SQP data for an ASIN."""
+
     asin: str
     week_date: date
     records: list[SQPRecord] = field(default_factory=list)
@@ -89,6 +93,7 @@ class WeeklySnapshot:
 @dataclass
 class ListingContent:
     """Listing content for keyword placement detection."""
+
     asin: str
     sku: str
     title: str = ""
@@ -114,6 +119,7 @@ class ListingContent:
 @dataclass
 class QuarterlyKeyword:
     """A keyword tracked for the quarter with weekly metrics."""
+
     rank: int
     keyword: str
     in_title: bool = False
@@ -140,14 +146,16 @@ class QuarterlyKeyword:
         # Add weekly metrics
         for week in weeks_to_include:
             metrics = self.weekly_metrics.get(week, {})
-            row.extend([
-                metrics.get("volume", ""),
-                metrics.get("imp_share", ""),
-                metrics.get("click_share", ""),
-                metrics.get("purchase_share", ""),
-                metrics.get("opportunity_score", ""),
-                metrics.get("rank_status", ""),
-            ])
+            row.extend(
+                [
+                    metrics.get("volume", ""),
+                    metrics.get("imp_share", ""),
+                    metrics.get("click_share", ""),
+                    metrics.get("purchase_share", ""),
+                    metrics.get("opportunity_score", ""),
+                    metrics.get("rank_status", ""),
+                ]
+            )
 
         # Add alerts
         row.append(" | ".join(self.alerts) if self.alerts else "")
