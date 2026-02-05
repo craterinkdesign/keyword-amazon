@@ -55,8 +55,7 @@ class SheetsClient:
         for record in records:
             # Normalize column names (case-insensitive, replace spaces with underscores)
             normalized = {
-                k.lower().strip().replace(" ", "_"): v
-                for k, v in record.items()
+                k.lower().strip().replace(" ", "_"): v for k, v in record.items()
             }
 
             asin = normalized.get("asin") or normalized.get("parent_asin", "")
@@ -75,15 +74,19 @@ class SheetsClient:
             else:
                 active = True  # Default to active if no status column
 
-            asins.append({
-                "asin": str(asin).strip().upper(),
-                "variation_asin": str(normalized.get("variation_asin", "")).strip().upper(),
-                "sku": str(normalized.get("sku", "")).strip(),
-                "active": active,
-                "name": normalized.get("product_name", normalized.get("name", "")),
-                "brand": normalized.get("brand", ""),
-                "sheet_name": normalized.get("sheet_name", ""),
-            })
+            asins.append(
+                {
+                    "asin": str(asin).strip().upper(),
+                    "variation_asin": str(normalized.get("variation_asin", ""))
+                    .strip()
+                    .upper(),
+                    "sku": str(normalized.get("sku", "")).strip(),
+                    "active": active,
+                    "name": normalized.get("product_name", normalized.get("name", "")),
+                    "brand": normalized.get("brand", ""),
+                    "sheet_name": normalized.get("sheet_name", ""),
+                }
+            )
 
         return asins
 

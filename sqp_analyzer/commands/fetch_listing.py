@@ -144,7 +144,9 @@ def main() -> int:
         print("Testing SP-API Listings connection...")
         credentials = get_credentials()
         try:
-            listings = ListingsItems(credentials=credentials, marketplace=Marketplaces.US)
+            _listings = ListingsItems(
+                credentials=credentials, marketplace=Marketplaces.US
+            )
             # Try to get a listing (will fail but proves connection works)
             print("[SUCCESS] Connected to SP-API Listings API")
             return 0

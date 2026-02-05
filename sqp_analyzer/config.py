@@ -7,6 +7,7 @@ from decouple import config
 @dataclass
 class SPAPIConfig:
     """SP-API configuration."""
+
     client_id: str
     client_secret: str
     refresh_token: str
@@ -20,6 +21,7 @@ class SPAPIConfig:
 @dataclass
 class SheetsConfig:
     """Google Sheets configuration."""
+
     spreadsheet_id: str
     master_tab_name: str
     credentials_path: str
@@ -28,6 +30,7 @@ class SheetsConfig:
 @dataclass
 class Thresholds:
     """Analysis thresholds for quarterly tracker."""
+
     # Rank Status thresholds (impression share %)
     rank_top_3_threshold: float = 20.0
     rank_page_1_high_threshold: float = 10.0
@@ -44,6 +47,7 @@ class Thresholds:
 @dataclass
 class AppConfig:
     """Application configuration."""
+
     sp_api: SPAPIConfig
     sheets: SheetsConfig
     thresholds: Thresholds
@@ -66,8 +70,7 @@ def load_config() -> AppConfig:
             spreadsheet_id=config("SPREADSHEET_ID"),
             master_tab_name=config("MASTER_TAB_NAME", default="ASINs"),
             credentials_path=config(
-                "GOOGLE_CREDENTIALS_PATH",
-                default="google-credentials.json"
+                "GOOGLE_CREDENTIALS_PATH", default="google-credentials.json"
             ),
         ),
         thresholds=Thresholds(
@@ -82,12 +85,8 @@ def load_config() -> AppConfig:
                 "RANK_PAGE_1_LOW_THRESHOLD", default=1.0, cast=float
             ),
             # Diagnostic thresholds
-            ghost_min_volume=config(
-                "GHOST_MIN_VOLUME", default=500, cast=int
-            ),
-            ghost_max_imp_share=config(
-                "GHOST_MAX_IMP_SHARE", default=1.0, cast=float
-            ),
+            ghost_min_volume=config("GHOST_MIN_VOLUME", default=500, cast=int),
+            ghost_max_imp_share=config("GHOST_MAX_IMP_SHARE", default=1.0, cast=float),
             window_shopper_min_imp_share=config(
                 "WINDOW_SHOPPER_MIN_IMP_SHARE", default=10.0, cast=float
             ),
