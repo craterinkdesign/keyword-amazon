@@ -51,6 +51,14 @@ python -m sqp_analyzer.commands.quarterly_tracker --update-all
 python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXX --wait
 ```
 
+## Session Best Practices (from Insights)
+
+- **Provide detailed plans upfront** - Sessions with explicit step-by-step plans achieve better outcomes.
+- **Let Claude finish planning** - Don't interrupt during planning phases. Let it complete, then redirect if needed.
+- **Define completion criteria** - Be explicit about what "done" looks like before starting.
+- **Group related changes** - Keep implementation → test → PR in one session rather than splitting across sessions.
+- **Break long tasks into checkpoints** - For multi-step work, define save points so progress isn't lost.
+
 ## When Working on This Project
 
 1. **Verify imports** after any file changes - run `python -c "from sqp_analyzer.commands.quarterly_tracker import main"` to check.
