@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Quarterly keyword tracker for Amazon SQP analysis.
 
-Tracks top 10 keywords per ASIN, locked for the quarter.
+Tracks top 10 keywords per ASIN in a single consolidated tab per quarter.
+Reads active ASINs from the master sheet automatically.
 Detects keyword placement in title/backend and alerts on changes.
 
 Usage:
-    # Start new quarter for an ASIN
-    python -m sqp_analyzer.commands.quarterly_tracker --start --asin B0CSH12L5P
+    # Start new quarter (all active ASINs)
+    python -m sqp_analyzer.commands.quarterly_tracker --start
 
-    # Weekly update (run every week)
-    python -m sqp_analyzer.commands.quarterly_tracker --update --asin B0CSH12L5P
-
-    # Update all ASINs from master list
-    python -m sqp_analyzer.commands.quarterly_tracker --update-all
+    # Weekly update (all active ASINs)
+    python -m sqp_analyzer.commands.quarterly_tracker --update
 """
 
 import argparse
@@ -21,6 +19,7 @@ import json
 import sys
 import time
 from datetime import date, timedelta
+from typing import Any
 
 import requests
 from sp_api.api import Reports
@@ -84,23 +83,19 @@ def get_week_in_quarter() -> int:
     return min(week_num, 13)
 
 
-def get_tab_name(asin: str, quarter: int | None = None, year: int | None = None) -> str:
-    """Generate tab name for quarterly tracker.
+def get_consolidated_tab_name(quarter: int | None = None) -> str:
+    """Generate consolidated tab name for quarterly tracker.
 
     Args:
-        asin: ASIN to track
         quarter: Quarter number (1-4), defaults to current
-        year: Year, defaults to current
 
     Returns:
-        Tab name like 'Q1-B0CSH12L5P'
+        Tab name like 'Q1'
     """
-    if quarter is None or year is None:
-        q, y = get_current_quarter()
-        quarter = quarter or q
-        year = year or y
+    if quarter is None:
+        quarter, _ = get_current_quarter()
 
-    return f"Q{quarter}-{asin}"
+    return f"Q{quarter}"
 
 
 def get_last_complete_week() -> tuple[date, date]:
@@ -391,7 +386,7 @@ def build_headers(weeks: list[str]) -> list[str]:
     Returns:
         Complete header row
     """
-    headers = ["Rank", "Keyword", "In Title", "In Backend"]
+    headers = ["ASIN", "Rank", "Keyword", "In Title", "In Backend"]
 
     for week in weeks:
         headers.extend(
@@ -407,6 +402,77 @@ def build_headers(weeks: list[str]) -> list[str]:
 
     headers.append("Alert")
     return headers
+
+
+def build_asin_separator_row(asin: str, product_name: str, num_cols: int) -> list:
+    """Build a separator row for an ASIN group.
+
+    Format: [asin, "", product_name, "", "", ...]
+    Detectable by: col 0 has value, col 1 (Rank) is empty.
+    """
+    row = [""] * num_cols
+    row[0] = asin
+    row[2] = product_name
+    return row
+
+
+def is_asin_separator_row(row: list) -> bool:
+    """Check if a row is an ASIN separator row.
+
+    Separator rows have ASIN in col 0 and empty Rank in col 1.
+    """
+    if len(row) < 2:
+        return False
+    return bool(row[0]) and not row[1]
+
+
+def parse_consolidated_sheet(
+    all_values: list[list],
+) -> dict[str, dict[str, Any]]:
+    """Parse a consolidated quarterly tracker sheet into per-ASIN data.
+
+    Args:
+        all_values: All rows from the sheet (including header row)
+
+    Returns:
+        Dict mapping ASIN -> {"name": str, "keywords": list[dict], "raw_rows": list[list]}
+        Each keyword dict has: rank, keyword, in_title, in_backend, row_data (full row)
+    """
+    if len(all_values) < 2:
+        return {}
+
+    headers = all_values[0]
+    data_rows = all_values[1:]
+
+    result: dict[str, dict[str, Any]] = {}
+    current_asin = None
+
+    for row in data_rows:
+        # Pad row to header length
+        padded = row + [""] * (len(headers) - len(row))
+
+        if is_asin_separator_row(padded):
+            current_asin = padded[0]
+            result[current_asin] = {
+                "name": padded[2],
+                "keywords": [],
+                "raw_rows": [padded],  # Include separator
+            }
+        elif current_asin and current_asin in result:
+            # Data row: col 0 = ASIN, col 1 = Rank, col 2 = Keyword,
+            # col 3 = In Title, col 4 = In Backend
+            result[current_asin]["keywords"].append(
+                {
+                    "rank": padded[1],
+                    "keyword": padded[2],
+                    "in_title": padded[3] == "YES",
+                    "in_backend": padded[4] == "YES",
+                    "row_data": padded,
+                }
+            )
+            result[current_asin]["raw_rows"].append(padded)
+
+    return result
 
 
 def check_keyword_alerts(
@@ -442,59 +508,26 @@ def check_keyword_alerts(
     return alerts
 
 
-def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
-    """Initialize quarterly tracker with top 10 keywords and all weeks so far.
+def _build_asin_keywords(
+    asin: str,
+    weekly_snapshots: dict[str, WeeklySnapshot],
+    week_labels: list[str],
+    listing: ListingContent | None,
+    config: AppConfig,
+) -> list[QuarterlyKeyword]:
+    """Build QuarterlyKeyword list for a single ASIN from weekly snapshots.
 
     Args:
-        config: App configuration
-        asin: ASIN to track
-        sku: Optional SKU for listing lookup (if not provided, won't check placement)
+        asin: ASIN being tracked
+        weekly_snapshots: Map of week_label -> WeeklySnapshot
+        week_labels: Ordered list of week labels
+        listing: Optional listing content for placement detection
+        config: App configuration for thresholds
 
     Returns:
-        True if successful
+        List of QuarterlyKeyword (up to TOP_KEYWORDS_COUNT)
     """
-    credentials = get_credentials()
-    quarter, year = get_current_quarter()
-    tab_name = get_tab_name(asin, quarter, year)
-
-    # Get all complete weeks in the quarter so far
-    quarter_weeks = get_quarter_weeks()
-    if not quarter_weeks:
-        print("[ERROR] No complete weeks in quarter yet")
-        return False
-
-    week_labels = [f"W{w[0]:02d}" for w in quarter_weeks]
     current_week_label = week_labels[-1]
-
-    print(f"\n{'=' * 60}")
-    print(f"Starting Q{quarter} {year} tracker for ASIN: {asin}")
-    print(f"Tab name: {tab_name}")
-    print(
-        f"Fetching weeks: {week_labels[0]} through {current_week_label} ({len(quarter_weeks)} weeks)"
-    )
-    print("=" * 60)
-
-    # Fetch SQP data for all weeks
-    weekly_snapshots: dict[str, WeeklySnapshot] = {}
-
-    for week_num, start_date, end_date in quarter_weeks:
-        week_label = f"W{week_num:02d}"
-        print(f"\n--- Fetching {week_label} ({start_date} to {end_date}) ---")
-
-        report_data = fetch_sqp_report(credentials, asin, start_date, end_date)
-        if report_data:
-            snapshot = parse_report_to_snapshot(report_data)
-            if snapshot:
-                weekly_snapshots[week_label] = snapshot
-                print(f"  Loaded {len(snapshot.records)} keywords")
-            else:
-                print(f"  [WARNING] Could not parse {week_label} data")
-        else:
-            print(f"  [WARNING] Could not fetch {week_label} data")
-
-    if not weekly_snapshots:
-        print("[ERROR] Failed to fetch any SQP data")
-        return False
 
     # Use most recent week to determine top keywords
     latest_snapshot = (
@@ -503,27 +536,10 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
         else list(weekly_snapshots.values())[-1]
     )
 
-    # Get top 10 keywords
     top_keywords = get_top_keywords(latest_snapshot)
     if not top_keywords:
-        print("[ERROR] No keywords with purchase data found")
-        return False
+        return []
 
-    print(
-        f"\n  Selected top {len(top_keywords)} keywords by volume from {current_week_label}"
-    )
-
-    # Fetch listing content if SKU provided
-    listing = None
-    if sku and config.sp_api.seller_id:
-        print(f"\n  Fetching listing content for SKU: {sku}")
-        listing = get_listing_content(config.sp_api.seller_id, sku)
-        if listing:
-            print(f"  Title: {listing.title[:50]}...")
-        else:
-            print("  [WARNING] Could not fetch listing content")
-
-    # Build quarterly keywords with metrics for all weeks
     quarterly_keywords: list[QuarterlyKeyword] = []
 
     for rank, latest_record in enumerate(top_keywords, 1):
@@ -541,7 +557,6 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
         for week_label in week_labels:
             if week_label in weekly_snapshots:
                 snapshot = weekly_snapshots[week_label]
-                # Find this keyword in the snapshot
                 record = None
                 for r in snapshot.records:
                     if r.search_query.lower() == keyword_lower:
@@ -564,7 +579,6 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
                         "rank_status": rank_status.value,
                     }
                 else:
-                    # Keyword not in this week's data
                     weekly_metrics[week_label] = {
                         "volume": "-",
                         "imp_share": "-",
@@ -574,7 +588,6 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
                         "rank_status": "invisible",
                     }
             else:
-                # No data for this week
                 weekly_metrics[week_label] = {
                     "volume": "-",
                     "imp_share": "-",
@@ -585,6 +598,7 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
                 }
 
         qk = QuarterlyKeyword(
+            asin=asin,
             rank=rank,
             keyword=keyword,
             in_title=in_title,
@@ -594,29 +608,118 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
         )
         quarterly_keywords.append(qk)
 
-    # Build headers and rows
+    return quarterly_keywords
+
+
+def start_quarter(config: AppConfig) -> bool:
+    """Initialize consolidated quarterly tracker with all active ASINs.
+
+    Reads active ASINs from the master sheet, fetches SQP data for each,
+    and writes a single consolidated tab (e.g., 'Q1') with all ASINs.
+
+    Args:
+        config: App configuration
+
+    Returns:
+        True if successful
+    """
+    credentials = get_credentials()
+    quarter, year = get_current_quarter()
+    tab_name = get_consolidated_tab_name(quarter)
+
+    # Get all complete weeks in the quarter so far
+    quarter_weeks = get_quarter_weeks()
+    if not quarter_weeks:
+        print("[ERROR] No complete weeks in quarter yet")
+        return False
+
+    week_labels = [f"W{w[0]:02d}" for w in quarter_weeks]
+    current_week_label = week_labels[-1]
+
+    # Read active ASINs from master sheet
+    sheets = SheetsClient(config.sheets)
+    asin_list = sheets.get_active_asins()
+
+    if not asin_list:
+        print("[ERROR] No active ASINs found in master list")
+        return False
+
+    print(f"\n{'=' * 60}")
+    print(f"Starting Q{quarter} {year} consolidated tracker")
+    print(f"Tab name: {tab_name}")
+    print(f"Active ASINs: {len(asin_list)}")
+    print(
+        f"Fetching weeks: {week_labels[0]} through {current_week_label} ({len(quarter_weeks)} weeks)"
+    )
+    print("=" * 60)
+
+    # Build headers
     headers = build_headers(week_labels)
-    rows = [qk.to_row(week_labels) for qk in quarterly_keywords]
+    num_cols = len(headers)
+    all_rows: list[list] = []
+
+    for asin_info in asin_list:
+        asin = asin_info["asin"]
+        sku = asin_info.get("sku", "")
+        product_name = asin_info.get("name", "")
+
+        print(f"\n--- Processing {asin} ({product_name}) ---")
+
+        # Fetch SQP data for all weeks
+        weekly_snapshots: dict[str, WeeklySnapshot] = {}
+        for week_num, start_date, end_date in quarter_weeks:
+            week_label = f"W{week_num:02d}"
+            print(f"  Fetching {week_label} ({start_date} to {end_date})")
+
+            report_data = fetch_sqp_report(credentials, asin, start_date, end_date)
+            if report_data:
+                snapshot = parse_report_to_snapshot(report_data)
+                if snapshot:
+                    weekly_snapshots[week_label] = snapshot
+                    print(f"    Loaded {len(snapshot.records)} keywords")
+                else:
+                    print(f"    [WARNING] Could not parse {week_label} data")
+            else:
+                print(f"    [WARNING] Could not fetch {week_label} data")
+
+        if not weekly_snapshots:
+            print(f"  [WARNING] No SQP data for {asin}, skipping")
+            continue
+
+        # Fetch listing content
+        listing = None
+        if sku and config.sp_api.seller_id:
+            listing = get_listing_content(config.sp_api.seller_id, sku)
+
+        # Build keywords for this ASIN
+        quarterly_keywords = _build_asin_keywords(
+            asin, weekly_snapshots, week_labels, listing, config
+        )
+
+        if not quarterly_keywords:
+            print(f"  [WARNING] No keywords with purchase data for {asin}")
+            continue
+
+        # Add separator row + keyword rows
+        all_rows.append(build_asin_separator_row(asin, product_name, num_cols))
+        all_rows.extend(qk.to_row(week_labels) for qk in quarterly_keywords)
+
+        print(f"  Added {len(quarterly_keywords)} keywords")
+
+    if not all_rows:
+        print("[ERROR] No keyword data for any ASIN")
+        return False
 
     # Write to Google Sheets
     print(f"\n  Writing to Google Sheets: {tab_name}")
-    sheets = SheetsClient(config.sheets)
-    sheets.write_quarterly_tracker(tab_name, headers, rows)
+    sheets.write_quarterly_tracker(tab_name, headers, all_rows)
 
     # Print summary
     print(f"\n{'=' * 60}")
     print(f"Quarterly tracker initialized for Q{quarter} {year}")
     print(f"Weeks included: {week_labels[0]} - {current_week_label}")
+    print(f"ASINs tracked: {len(asin_list)}")
     print(f"{'=' * 60}")
-    print(f"\n{'Rank':<4} {'Keyword':<35} {'Title':>6} {'Back':>6} {'Vol':>6}")
-    print("-" * 65)
-    for qk in quarterly_keywords:
-        title_mark = "YES" if qk.in_title else "NO"
-        backend_mark = "YES" if qk.in_backend else "NO"
-        vol = qk.weekly_metrics.get(current_week_label, {}).get("volume", 0)
-        print(
-            f"{qk.rank:<4} {qk.keyword[:33]:<35} {title_mark:>6} {backend_mark:>6} {vol:>6}"
-        )
 
     print(
         f"\nView results: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}"
@@ -624,85 +727,50 @@ def start_quarter(config: AppConfig, asin: str, sku: str | None = None) -> bool:
     return True
 
 
-def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
-    """Update quarterly tracker with new week's metrics.
+def update_week(config: AppConfig) -> bool:
+    """Update consolidated quarterly tracker with new week's metrics.
+
+    Reads the existing consolidated sheet, fetches new data for all active ASINs,
+    and rebuilds the sheet. New ASINs get full initialization; existing ASINs
+    get the current week merged in.
 
     Args:
         config: App configuration
-        asin: ASIN to update
-        sku: Optional SKU for listing lookup
 
     Returns:
         True if successful
     """
     credentials = get_credentials()
     quarter, year = get_current_quarter()
-    tab_name = get_tab_name(asin, quarter, year)
+    tab_name = get_consolidated_tab_name(quarter)
     week_num = get_week_in_quarter()
     week_label = f"W{week_num:02d}"
 
     print(f"\n{'=' * 60}")
-    print(f"Updating Q{quarter} {year} tracker for ASIN: {asin}")
+    print(f"Updating Q{quarter} {year} consolidated tracker")
     print(f"Tab name: {tab_name}")
     print(f"Week: {week_label}")
     print("=" * 60)
 
-    # Read existing tracker data
+    # Read active ASINs from master sheet
     sheets = SheetsClient(config.sheets)
+    asin_list = sheets.get_active_asins()
+
+    if not asin_list:
+        print("[ERROR] No active ASINs found in master list")
+        return False
+
+    # Read existing tracker data
     existing_data = sheets.get_quarterly_tracker(tab_name)
 
     if not existing_data:
-        print(f"[ERROR] Quarterly tracker {tab_name} not found")
-        print("Run with --start first to initialize the quarter")
-        return False
+        print(f"[INFO] No existing tracker {tab_name}, running full start instead")
+        return start_quarter(config)
 
     headers = existing_data[0]
-    data_rows = existing_data[1:]
+    existing_asins = parse_consolidated_sheet(existing_data)
 
-    # Check if this week already exists
-    if any(week_label in h for h in headers):
-        print(f"[WARNING] Week {week_label} already has data. Updating...")
-
-    # Parse existing keywords
-    existing_keywords = []
-    for row in data_rows:
-        if len(row) >= 4:
-            existing_keywords.append(
-                {
-                    "rank": row[0],
-                    "keyword": row[1],
-                    "prev_in_title": row[2] == "YES",
-                    "prev_in_backend": row[3] == "YES",
-                }
-            )
-
-    if not existing_keywords:
-        print("[ERROR] No keywords found in tracker")
-        return False
-
-    # Fetch new SQP data
-    start_date, end_date = get_last_complete_week()
-    report_data = fetch_sqp_report(credentials, asin, start_date, end_date)
-
-    if not report_data:
-        print("[ERROR] Failed to fetch SQP data")
-        return False
-
-    snapshot = parse_report_to_snapshot(report_data)
-    if not snapshot:
-        print("[ERROR] Failed to parse SQP report")
-        return False
-
-    # Build lookup for current week's data
-    current_data = {r.search_query.lower(): r for r in snapshot.records}
-
-    # Fetch current listing content
-    listing = None
-    if sku and config.sp_api.seller_id:
-        print(f"\n  Fetching listing content for SKU: {sku}")
-        listing = get_listing_content(config.sp_api.seller_id, sku)
-
-    # Determine which weeks already exist
+    # Determine existing weeks from headers
     existing_weeks = []
     for h in headers:
         if h.endswith(" Vol"):
@@ -716,105 +784,165 @@ def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
         all_weeks.append(week_label)
     all_weeks.sort()
 
-    # Build new rows with updated data
-    new_rows = []
-    alerts_found = []
-
-    for existing in existing_keywords:
-        keyword = existing["keyword"]
-        keyword_lower = keyword.lower()
-
-        # Check if keyword is in current data
-        record = current_data.get(keyword_lower)
-
-        # Check keyword placement
-        current_in_title = existing["prev_in_title"]
-        current_in_backend = existing["prev_in_backend"]
-
-        if listing:
-            current_in_title, current_in_backend = listing.contains_keyword(keyword)
-
-            # Check for alerts
-            alerts = check_keyword_alerts(
-                keyword,
-                listing,
-                existing["prev_in_title"],
-                existing["prev_in_backend"],
-            )
-            if alerts:
-                alerts_found.extend([(keyword, a) for a in alerts])
-
-        # Build row
-        row = [
-            existing["rank"],
-            keyword,
-            "YES" if current_in_title else "NO",
-            "YES" if current_in_backend else "NO",
-        ]
-
-        # Add metrics for each week
-        for week in all_weeks:
-            if week == week_label and record:
-                # Current week - use fresh data
-                diagnostic = get_diagnostic_type(record, config.thresholds)
-                opp_score = calculate_opportunity_score(record, diagnostic)
-                rank_status = get_rank_status(
-                    record.impressions_share, config.thresholds
-                )
-
-                row.extend(
-                    [
-                        record.search_volume,
-                        round(record.impressions_share, 1),
-                        round(record.clicks_share, 1),
-                        round(record.purchases_share, 1),
-                        opp_score,
-                        rank_status.value,
-                    ]
-                )
-            elif week == week_label:
-                # Current week but no data for this keyword
-                row.extend(["-", "-", "-", "-", "-", "invisible"])
-            else:
-                # Previous week - preserve existing data
-                # Find the column indices for this week
-                week_start_idx = None
-                for i, h in enumerate(headers):
-                    if h == f"{week} Vol":
-                        week_start_idx = i
-                        break
-
-                if week_start_idx is not None:
-                    # Get the row index for this keyword
-                    row_idx = None
-                    for i, data_row in enumerate(data_rows):
-                        if len(data_row) > 1 and data_row[1] == keyword:
-                            row_idx = i
-                            break
-
-                    if row_idx is not None and week_start_idx + 6 <= len(
-                        data_rows[row_idx]
-                    ):
-                        row.extend(
-                            data_rows[row_idx][week_start_idx : week_start_idx + 6]
-                        )
-                    else:
-                        row.extend(["", "", "", "", "", ""])
-                else:
-                    row.extend(["", "", "", "", "", ""])
-
-        # Add alerts
-        keyword_alerts = [a for kw, a in alerts_found if kw == keyword]
-        row.append(" | ".join(keyword_alerts) if keyword_alerts else "")
-
-        new_rows.append(row)
-
-    # Build new headers
+    # Build new headers and all rows
     new_headers = build_headers(all_weeks)
+    num_cols = len(new_headers)
+    all_rows: list[list] = []
+    alerts_found: list[tuple[str, str, str]] = []  # (asin, keyword, alert)
+
+    for asin_info in asin_list:
+        asin = asin_info["asin"]
+        sku = asin_info.get("sku", "")
+        product_name = asin_info.get("name", "")
+
+        print(f"\n--- Processing {asin} ({product_name}) ---")
+
+        if asin in existing_asins:
+            # UPDATE PATH: ASIN exists in sheet, merge new week data
+            print(f"  Updating existing ASIN with {week_label} data")
+
+            # Fetch current week's SQP data
+            start_date, end_date = get_last_complete_week()
+            report_data = fetch_sqp_report(credentials, asin, start_date, end_date)
+
+            snapshot = None
+            if report_data:
+                snapshot = parse_report_to_snapshot(report_data)
+
+            current_data = {}
+            if snapshot:
+                current_data = {r.search_query.lower(): r for r in snapshot.records}
+
+            # Fetch listing content
+            listing = None
+            if sku and config.sp_api.seller_id:
+                listing = get_listing_content(config.sp_api.seller_id, sku)
+
+            # Rebuild rows for this ASIN
+            asin_data = existing_asins[asin]
+            all_rows.append(
+                build_asin_separator_row(
+                    asin, asin_data["name"] or product_name, num_cols
+                )
+            )
+
+            for kw_info in asin_data["keywords"]:
+                keyword = kw_info["keyword"]
+                keyword_lower = keyword.lower()
+                record = current_data.get(keyword_lower)
+                old_row = kw_info["row_data"]
+
+                # Check keyword placement
+                current_in_title = kw_info["in_title"]
+                current_in_backend = kw_info["in_backend"]
+
+                if listing:
+                    current_in_title, current_in_backend = listing.contains_keyword(
+                        keyword
+                    )
+                    alerts = check_keyword_alerts(
+                        keyword, listing, kw_info["in_title"], kw_info["in_backend"]
+                    )
+                    if alerts:
+                        alerts_found.extend((asin, keyword, a) for a in alerts)
+
+                # Build new row
+                row = [
+                    asin,
+                    kw_info["rank"],
+                    keyword,
+                    "YES" if current_in_title else "NO",
+                    "YES" if current_in_backend else "NO",
+                ]
+
+                # Add metrics for each week
+                for week in all_weeks:
+                    if week == week_label and record:
+                        diagnostic = get_diagnostic_type(record, config.thresholds)
+                        opp_score = calculate_opportunity_score(record, diagnostic)
+                        rank_status = get_rank_status(
+                            record.impressions_share, config.thresholds
+                        )
+                        row.extend(
+                            [
+                                record.search_volume,
+                                round(record.impressions_share, 1),
+                                round(record.clicks_share, 1),
+                                round(record.purchases_share, 1),
+                                opp_score,
+                                rank_status.value,
+                            ]
+                        )
+                    elif week == week_label:
+                        row.extend(["-", "-", "-", "-", "-", "invisible"])
+                    else:
+                        # Preserve existing data from old row
+                        week_start_idx = None
+                        for i, h in enumerate(headers):
+                            if h == f"{week} Vol":
+                                week_start_idx = i
+                                break
+
+                        if week_start_idx is not None and week_start_idx + 6 <= len(
+                            old_row
+                        ):
+                            row.extend(old_row[week_start_idx : week_start_idx + 6])
+                        else:
+                            row.extend(["", "", "", "", "", ""])
+
+                # Add alerts
+                kw_alerts = [
+                    a for aa, kw, a in alerts_found if aa == asin and kw == keyword
+                ]
+                row.append(" | ".join(kw_alerts) if kw_alerts else "")
+
+                all_rows.append(row)
+
+            print(f"  Updated {len(asin_data['keywords'])} keywords")
+
+        else:
+            # START PATH: New ASIN, fetch all weeks
+            print("  New ASIN, fetching all weeks")
+
+            quarter_weeks = get_quarter_weeks()
+            weekly_snapshots: dict[str, WeeklySnapshot] = {}
+
+            for wk_num, start_date, end_date in quarter_weeks:
+                wk_label = f"W{wk_num:02d}"
+                report_data = fetch_sqp_report(credentials, asin, start_date, end_date)
+                if report_data:
+                    snap = parse_report_to_snapshot(report_data)
+                    if snap:
+                        weekly_snapshots[wk_label] = snap
+
+            if not weekly_snapshots:
+                print(f"  [WARNING] No SQP data for new ASIN {asin}, skipping")
+                continue
+
+            listing = None
+            if sku and config.sp_api.seller_id:
+                listing = get_listing_content(config.sp_api.seller_id, sku)
+
+            quarterly_keywords = _build_asin_keywords(
+                asin, weekly_snapshots, all_weeks, listing, config
+            )
+
+            if not quarterly_keywords:
+                print(f"  [WARNING] No keywords with purchase data for {asin}")
+                continue
+
+            all_rows.append(build_asin_separator_row(asin, product_name, num_cols))
+            all_rows.extend(qk.to_row(all_weeks) for qk in quarterly_keywords)
+
+            print(f"  Added {len(quarterly_keywords)} keywords")
+
+    if not all_rows:
+        print("[ERROR] No keyword data for any ASIN")
+        return False
 
     # Write updated data
     print(f"\n  Writing updated data to {tab_name}")
-    sheets.write_quarterly_tracker(tab_name, new_headers, new_rows)
+    sheets.write_quarterly_tracker(tab_name, new_headers, all_rows)
 
     # Print summary
     print(f"\n{'=' * 60}")
@@ -823,66 +951,13 @@ def update_week(config: AppConfig, asin: str, sku: str | None = None) -> bool:
 
     if alerts_found:
         print(f"\n[ALERTS] {len(alerts_found)} placement changes detected:")
-        for keyword, alert in alerts_found:
-            print(f"  - {keyword}: {alert}")
+        for asin, keyword, alert in alerts_found:
+            print(f"  - {asin} / {keyword}: {alert}")
 
     print(
         f"\nView results: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}"
     )
     return True
-
-
-def update_all(config: AppConfig) -> bool:
-    """Update all active ASINs from master list.
-
-    Args:
-        config: App configuration
-
-    Returns:
-        True if all updates successful
-    """
-    print(f"\n{'=' * 60}")
-    print("Updating all active ASINs")
-    print("=" * 60)
-
-    sheets = SheetsClient(config.sheets)
-    asins = sheets.get_active_asins()
-
-    if not asins:
-        print("[ERROR] No active ASINs found in master list")
-        return False
-
-    print(f"Found {len(asins)} active ASINs")
-
-    success_count = 0
-    for asin_info in asins:
-        asin = asin_info["asin"]
-        sku = asin_info.get("sku", "")
-
-        try:
-            # Check if quarterly tracker exists
-            quarter, year = get_current_quarter()
-            tab_name = get_tab_name(asin, quarter, year)
-
-            if sheets.get_quarterly_tracker(tab_name):
-                # Tracker exists, update it
-                if update_week(config, asin, sku if sku else None):
-                    success_count += 1
-            else:
-                # No tracker, start new quarter
-                print(f"\n  No tracker found for {asin}, starting new quarter...")
-                if start_quarter(config, asin, sku if sku else None):
-                    success_count += 1
-
-        except Exception as e:
-            print(f"\n[ERROR] Failed to update {asin}: {e}")
-            continue
-
-    print(f"\n{'=' * 60}")
-    print(f"Completed: {success_count}/{len(asins)} ASINs updated")
-    print("=" * 60)
-
-    return success_count == len(asins)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -892,43 +967,22 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Start new quarter for an ASIN
-    python -m sqp_analyzer.commands.quarterly_tracker --start --asin B0CSH12L5P
+    # Start new quarter (all active ASINs from master sheet)
+    python -m sqp_analyzer.commands.quarterly_tracker --start
 
-    # Start with SKU for title/backend detection
-    python -m sqp_analyzer.commands.quarterly_tracker --start --asin B0CSH12L5P --sku YOUR-SKU
-
-    # Weekly update
-    python -m sqp_analyzer.commands.quarterly_tracker --update --asin B0CSH12L5P
-
-    # Update all ASINs from master list
-    python -m sqp_analyzer.commands.quarterly_tracker --update-all
+    # Weekly update (all active ASINs)
+    python -m sqp_analyzer.commands.quarterly_tracker --update
         """,
     )
     parser.add_argument(
         "--start",
         action="store_true",
-        help="Start new quarter tracker with top 10 keywords",
+        help="Start new quarter tracker with top 10 keywords for all active ASINs",
     )
     parser.add_argument(
         "--update",
         action="store_true",
-        help="Update existing tracker with new week's data",
-    )
-    parser.add_argument(
-        "--update-all",
-        action="store_true",
-        help="Update all active ASINs from master list",
-    )
-    parser.add_argument(
-        "--asin",
-        type=str,
-        help="ASIN to track",
-    )
-    parser.add_argument(
-        "--sku",
-        type=str,
-        help="SKU for listing content lookup (title/backend detection)",
+        help="Update tracker with new week's data for all active ASINs",
     )
     parser.add_argument(
         "--test-sheets",
@@ -961,23 +1015,10 @@ def main() -> int:
             print("[FAILED] Could not connect to Google Sheets")
             return 1
 
-    # Update all ASINs
-    if args.update_all:
-        return 0 if update_all(config) else 1
-
-    # Single ASIN operations require --asin
-    if args.start or args.update:
-        if not args.asin:
-            print("[ERROR] --asin is required for --start and --update")
-            return 1
-
-        asin = args.asin.upper()
-        sku = args.sku
-
-        if args.start:
-            return 0 if start_quarter(config, asin, sku) else 1
-        elif args.update:
-            return 0 if update_week(config, asin, sku) else 1
+    if args.start:
+        return 0 if start_quarter(config) else 1
+    elif args.update:
+        return 0 if update_week(config) else 1
 
     # No action specified
     parser.print_help()

@@ -43,9 +43,9 @@ sqp_analyzer/
 ## Common Commands
 
 ```bash
-# Quarterly tracker
-python -m sqp_analyzer.commands.quarterly_tracker --start --asin B0XXX
-python -m sqp_analyzer.commands.quarterly_tracker --update-all
+# Quarterly tracker (reads active ASINs from master sheet automatically)
+python -m sqp_analyzer.commands.quarterly_tracker --start
+python -m sqp_analyzer.commands.quarterly_tracker --update
 
 # Fetch SQP data
 python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXX --wait
@@ -63,4 +63,4 @@ python -m sqp_analyzer.commands.fetch_sqp_data --asin B0XXX --wait
 
 1. **Verify imports** after any file changes - run `python -c "from sqp_analyzer.commands.quarterly_tracker import main"` to check.
 2. **SQP reports take 30-60 min** - Don't wait synchronously in tests.
-3. **Sheets tabs**: `ASINs` is the master list, `Q{N}-{ASIN}` are quarterly trackers.
+3. **Sheets tabs**: `ASINs` is the master list, `Q{N}` is the consolidated quarterly tracker.

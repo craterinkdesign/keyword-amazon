@@ -120,6 +120,7 @@ class ListingContent:
 class QuarterlyKeyword:
     """A keyword tracked for the quarter with weekly metrics."""
 
+    asin: str
     rank: int
     keyword: str
     in_title: bool = False
@@ -137,6 +138,7 @@ class QuarterlyKeyword:
             List of values for the row
         """
         row = [
+            self.asin,
             self.rank,
             self.keyword,
             "YES" if self.in_title else "NO",
